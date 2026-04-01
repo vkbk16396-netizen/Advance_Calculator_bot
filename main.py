@@ -7,300 +7,140 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import telebot
 from fastapi import FastAPI, Request
-from sympy.stats import Normal, density
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup
+)
 
 app = FastAPI()
 
-# ================= TOKEN =================
 TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN not set")
-
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 
-# ================= STORAGE =================
-chat_angle_mode = {}
-chat_history = {}
 chat_variables = {}
 
+# ================= KEYBOARD =================
+def main_menu():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row("🧮 Calculate", "📊 Stats")
+    kb.row("📈 Plot", "📘 Help")
+    return kb
+
 # ================= PREPROCESS =================
-def preprocess_expression(expr: str) -> str:
+def preprocess(expr):
     expr = expr.lower().strip()
 
     expr = re.sub(r'(sin|cos|tan)\s+(\d+)', r'\1(\2)', expr)
+    expr = expr.replace("×","*").replace("÷","/")
+    expr = re.sub(r'(\d+)%', r'(\1/100)', expr)
 
-    superscripts = {
-        "⁰":"^0","¹":"^1","²":"^2","³":"^3","⁴":"^4",
-        "⁵":"^5","⁶":"^6","⁷":"^7","⁸":"^8","⁹":"^9"
-    }
-    for k, v in superscripts.items():
-        expr = expr.replace(k, v)
+    return expr.replace("^","**")
 
-    expr = expr.replace("×", "*").replace("÷", "/")
-
-    expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
-
-    return expr
-
-# ================= HISTORY =================
-def add_history(chat_id, expr, result):
-    chat_history.setdefault(chat_id, []).append((expr, result))
-    if len(chat_history[chat_id]) > 30:
-        chat_history[chat_id].pop(0)
-
-# ================= SAFE LOCALS =================
-def get_safe_locals(chat_id):
-    mode = chat_angle_mode.get(chat_id, "rad")
-
-    x, y, z = sp.symbols('x y z')
-
-    if mode == "deg":
-        trig = {
-            "sin": lambda v: sp.sin(sp.rad(v)),
-            "cos": lambda v: sp.cos(sp.rad(v)),
-            "tan": lambda v: sp.tan(sp.rad(v)),
-        }
-    else:
-        trig = {
-            "sin": sp.sin,
-            "cos": sp.cos,
-            "tan": sp.tan
-        }
-
+# ================= SAFE =================
+def safe_locals():
+    x = sp.symbols('x')
     return {
-        **trig,
-        "x": x,
-        "y": y,
-        "z": z,
-        "sqrt": sp.sqrt,
-        "log": sp.log,
-        "exp": sp.exp,
-        "pi": sp.pi,
-        "e": sp.E,
-        "factorial": sp.factorial,
-        "diff": sp.diff,
-        "integrate": sp.integrate,
-        "Matrix": sp.Matrix,
-        "abs": sp.Abs,
-        "Normal": Normal,
-        "pdf": density,
-        **chat_variables.get(chat_id, {})
+        "x":x,
+        "sin":sp.sin,"cos":sp.cos,"tan":sp.tan,
+        "sqrt":sp.sqrt,"log":sp.log,
+        "diff":sp.diff,"integrate":sp.integrate,
+        "Matrix":sp.Matrix
     }
 
 # ================= EVALUATE =================
-def evaluate(expr, chat_id):
-    expr = preprocess_expression(expr)
-    expr = expr.replace("^", "**")
+def evaluate(expr):
+    expr = preprocess(expr)
 
-    safe = get_safe_locals(chat_id)
+    if expr.startswith("matrix"):
+        return sp.Matrix(eval(expr, {"__builtins__":{}}))
 
-    # variable assignment
-    if "=" in expr and expr.count("=") == 1:
-        left, right = expr.split("=")
-        if left.strip().isidentifier():
-            val = sp.sympify(right, locals=safe)
-            chat_variables.setdefault(chat_id, {})[left.strip()] = val
-            return f"📌 `{left.strip()}` = `{val}`"
+    return sp.sympify(expr, locals=safe_locals())
 
-    try:
-        res = sp.sympify(expr, locals=safe)
+# ================= SOLVE =================
+def solve_equation(expr):
+    x = sp.symbols('x')
+    expr = preprocess(expr)
+    eq = sp.sympify(expr.replace("=", "-(")+")")
+    return sp.solve(eq, x)
 
-        if res.free_symbols:
-            return str(res)
+# ================= PLOT MULTI =================
+def plot_multi(expr):
+    x = sp.symbols('x')
+    funcs = expr.split(",")
 
-        return float(res.evalf())
-    except:
-        return None
+    xs = np.linspace(-10,10,400)
 
-# ================= HELP =================
-def get_help():
-    return """
-📘 *ULTIMATE CALCULATOR*
+    plt.figure()
 
-🧮 BASIC
-`2+2`, `5^2`, `10/3`, `5%`
+    for f in funcs:
+        f = sp.lambdify(x, sp.sympify(preprocess(f)), 'numpy')
+        plt.plot(xs, f(xs))
 
-📐 TRIG
-`sin(30)` `cos 60`
-Use `/deg` `/rad`
+    plt.grid()
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
 
-📊 CALCULUS
-`diff(x^2,x)`
-`integrate(x^2,x)`
-
-📦 MATRIX
-`Matrix([[1,2],[3,4]])`
-
-🎲 PROBABILITY
-`pdf(Normal(0,1),0)`
-
-📈 GRAPH
-`/plot sin(x)`
-
-📐 LATEX
-`/latex diff(x^2,x)`
-
-🐍 PYTHON
-`/py 2**10`
-
-📂 MEMORY
-`x=10`, `x+5`
-
-COMMANDS:
-/history /vars /clear /clearvars
-"""
-
-# ================= ROOT =================
-@app.get("/")
-async def root():
-    return {"status": "LIVE 🚀"}
+    return buf
 
 # ================= WEBHOOK =================
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
 
-    # ===== BUTTON HANDLER =====
-    if "callback_query" in data:
-        call = data["callback_query"]
-        chat_id = call["message"]["chat"]["id"]
-        data_btn = call["data"]
-
-        if data_btn == "help":
-            await asyncio.to_thread(bot.send_message, chat_id, get_help())
-
-        elif data_btn == "features":
-            await asyncio.to_thread(
-                bot.send_message,
-                chat_id,
-                "🔥 *Features:*\n\n"
-                "🧮 Calculator\n📐 Trigonometry\n📊 Calculus\n📦 Matrix\n📈 Graph\n📐 LaTeX\n🎲 Probability\n🐍 Python"
-            )
-
-        elif data_btn == "plot":
-            await asyncio.to_thread(bot.send_message, chat_id, "📈 Use:\n`/plot sin(x)`")
-
-        elif data_btn == "calc":
-            await asyncio.to_thread(bot.send_message, chat_id, "🧮 Try:\n`2+2`\n`sqrt(16)`")
-
-        return {"ok": True}
-
     if "message" not in data:
-        return {"ok": True}
+        return {"ok":True}
 
     msg = data["message"]
     chat_id = msg["chat"]["id"]
-    text = msg.get("text", "").strip()
-    lower = text.lower()
+    text = msg.get("text","")
 
     # ===== START =====
-    if lower == "/start":
-        markup = InlineKeyboardMarkup()
-        markup.row(
-            InlineKeyboardButton("📘 Help", callback_data="help"),
-            InlineKeyboardButton("📊 Features", callback_data="features")
-        )
-        markup.row(
-            InlineKeyboardButton("📈 Plot", callback_data="plot"),
-            InlineKeyboardButton("📐 Calculator", callback_data="calc")
-        )
-
-        await asyncio.to_thread(
-            bot.send_message,
-            chat_id,
-            "✨ *Welcome to Most Advanced Calculator* 🤖\n"
-            "━━━━━━━━━━━━━━━━━━━\n\n"
-            "🚀 *Powerful • Fast • Smart*\n\n"
-            "👨‍💻 *Made by:* @Sudhakaran12\n\n"
-            "👉 Use /help to explore all features\n\n"
-            "💡 *Tip:* Try `2²`, `cos 60`, `sin(30)`",
-            reply_markup=markup
-        )
+    if text.lower()=="/start":
+        await asyncio.to_thread(bot.send_message, chat_id,
+        "🚀 *GOD MODE CALCULATOR ACTIVATED*\n\n"
+        "🔥 Next Level Math Engine\n\n"
+        "👉 Try /help",
+        reply_markup=main_menu())
 
     # ===== HELP =====
-    elif lower == "/help":
-        await asyncio.to_thread(bot.send_message, chat_id, get_help())
+    elif text.lower()=="/help":
+        await asyncio.to_thread(bot.send_message, chat_id,
+        "*COMMANDS*\n\n"
+        "/solve x^2-4=0\n"
+        "/plot sin(x),cos(x)\n"
+        "Matrix([[1,2],[3,4]])\n"
+        "diff(x^2,x)")
 
-    # ===== MODES =====
-    elif lower == "/deg":
-        chat_angle_mode[chat_id] = "deg"
-        await asyncio.to_thread(bot.send_message, chat_id, "📐 Degree mode ON")
-
-    elif lower == "/rad":
-        chat_angle_mode[chat_id] = "rad"
-        await asyncio.to_thread(bot.send_message, chat_id, "📐 Radian mode ON")
-
-    # ===== HISTORY =====
-    elif lower == "/history":
-        hist = chat_history.get(chat_id, [])
-        txt = "Empty" if not hist else "\n".join(f"`{e}` = {r}" for e, r in hist)
-        await asyncio.to_thread(bot.send_message, chat_id, txt)
-
-    elif lower == "/clear":
-        chat_history[chat_id] = []
-        await asyncio.to_thread(bot.send_message, chat_id, "🗑 Cleared")
-
-    # ===== VARIABLES =====
-    elif lower == "/vars":
-        vars_ = chat_variables.get(chat_id, {})
-        txt = "None" if not vars_ else "\n".join(f"{k} = {v}" for k, v in vars_.items())
-        await asyncio.to_thread(bot.send_message, chat_id, txt)
-
-    elif lower == "/clearvars":
-        chat_variables[chat_id] = {}
-        await asyncio.to_thread(bot.send_message, chat_id, "🗑 Cleared")
+    # ===== SOLVE =====
+    elif text.startswith("/solve"):
+        expr = text[6:].strip()
+        res = solve_equation(expr)
+        await asyncio.to_thread(bot.send_message, chat_id, f"🧠 Solution: `{res}`")
 
     # ===== PLOT =====
-    elif lower.startswith("/plot"):
-        expr = preprocess_expression(text[5:].strip())
+    elif text.startswith("/plot"):
+        expr = text[5:].strip()
+        buf = plot_multi(expr)
+        await asyncio.to_thread(bot.send_photo, chat_id, buf)
+
+    # ===== BUTTONS =====
+    elif text == "🧮 Calculate":
+        await asyncio.to_thread(bot.send_message, chat_id, "Enter expression")
+
+    elif text == "📊 Stats":
+        await asyncio.to_thread(bot.send_message, chat_id, "Try: mean(1,2,3)")
+
+    elif text == "📈 Plot":
+        await asyncio.to_thread(bot.send_message, chat_id, "/plot sin(x),cos(x)")
+
+    # ===== DEFAULT =====
+    else:
         try:
-            x = sp.symbols('x')
-            f = sp.lambdify(x, sp.sympify(expr), 'numpy')
-            xs = np.linspace(-10, 10, 400)
-            ys = f(xs)
-
-            plt.figure()
-            plt.plot(xs, ys)
-            plt.grid()
-
-            buf = BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close()
-
-            await asyncio.to_thread(bot.send_photo, chat_id, buf)
-        except:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ Plot error")
-
-    # ===== LATEX =====
-    elif lower.startswith("/latex"):
-        expr = preprocess_expression(text[6:].strip())
-        try:
-            latex = sp.latex(sp.sympify(expr))
-            await asyncio.to_thread(bot.send_message, chat_id, f"`{latex}`")
+            res = evaluate(text)
+            await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{res}`")
         except:
             await asyncio.to_thread(bot.send_message, chat_id, "❌ Error")
 
-    # ===== PY =====
-    elif lower.startswith("/py"):
-        code = text[3:].strip()
-        if "import" in code or "__" in code:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ Unsafe")
-        else:
-            try:
-                res = eval(code, {"__builtins__": {}})
-                await asyncio.to_thread(bot.send_message, chat_id, str(res))
-            except:
-                await asyncio.to_thread(bot.send_message, chat_id, "❌ Error")
-
-    # ===== CALCULATE =====
-    else:
-        result = evaluate(text, chat_id)
-        if result is not None:
-            add_history(chat_id, text, result)
-            await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
-        else:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ Invalid input")
-
-    return {"ok": True}
+    return {"ok":True}
