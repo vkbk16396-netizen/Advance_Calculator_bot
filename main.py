@@ -1,4 +1,3 @@
-# ================= IMPORTS =================
 import os
 import re
 import asyncio
@@ -13,17 +12,12 @@ from PIL import Image
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from openai import OpenAI
-import pytesseract
 
 app = FastAPI()
 
-# ================= TOKENS =================
+# ================= TOKEN =================
 TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # ================= DATABASE =================
 conn = sqlite3.connect("history.db", check_same_thread=False)
@@ -36,14 +30,12 @@ chat_variables = {}
 # ================= PREPROCESS =================
 def preprocess(expr):
     expr = expr.lower().strip()
-    if not expr:
-        return ""
     expr = re.sub(r'(sin|cos|tan)\s+(\d+)', r'\1(\2)', expr)
     expr = expr.replace("×","*").replace("÷","/")
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
     return expr.replace("^","**")
 
-# ================= SAFE LOCALS =================
+# ================= SAFE =================
 def safe_locals(chat_id):
     x = sp.symbols('x')
     return {
@@ -80,71 +72,68 @@ def evaluate(expr, chat_id):
     except:
         return None
 
-# ================= SAVE HISTORY =================
+# ================= SAVE =================
 def save_history(chat_id, expr, result):
     cursor.execute("INSERT INTO history VALUES (?, ?, ?)", (chat_id, expr, str(result)))
     conn.commit()
 
-# ================= AI =================
-def ai_chat(prompt):
-    if not client:
-        return "❌ AI not configured"
-    try:
-        res = client.chat.completions.create(
-            model="gpt-5-mini",
-            messages=[{"role":"user","content":prompt}]
-        )
-        return res.choices[0].message.content
-    except:
-        return "❌ AI error"
+# ================= HELP DESIGN =================
+def get_help():
+    return """
+✨ *ULTIMATE CALCULATOR PRO* 🤖
+━━━━━━━━━━━━━━━━━━━
 
-# ================= OCR SAFE =================
-def solve_image(path):
-    try:
-        return pytesseract.image_to_string(Image.open(path))
-    except:
-        return None
+🧮 *BASIC*
+`2+2`, `5^2`, `10/3`, `5%`
 
-# ================= URL SHORTENER =================
-def shorten_url(url):
-    try:
-        return requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
-    except:
-        return "❌ Failed"
+📐 *TRIGONOMETRY*
+`sin(30)`, `cos 60`
+Use `/deg` `/rad`
 
-# ================= EXPORT =================
-def export_history(chat_id):
-    cursor.execute("SELECT expr, result FROM history WHERE chat_id=?", (chat_id,))
-    rows = cursor.fetchall()
-    if not rows:
-        return None
+📊 *CALCULUS*
+`diff(x^2,x)`
+`integrate(x^2,x)`
 
-    filename = f"history_{chat_id}.txt"
-    with open(filename, "w") as f:
-        for e, r in rows:
-            f.write(f"{e} = {r}\n")
-    return filename
+📦 *MATRIX*
+`Matrix([[1,2],[3,4]])`
 
-# ================= UNIT =================
-def unit_convert(text):
-    try:
-        parts = text.split()
-        value = float(parts[0])
-        from_unit = parts[1]
-        to_unit = parts[3]
+🎲 *PROBABILITY*
+`pdf(Normal(0,1),0)`
 
-        conv = {
-            ("km","m"): value*1000,
-            ("m","km"): value/1000,
-            ("kg","g"): value*1000,
-            ("g","kg"): value/1000,
-            ("cm","m"): value/100,
-            ("m","cm"): value*100,
-        }
+📈 *GRAPH*
+`/plot sin(x),cos(x)`
 
-        return conv.get((from_unit, to_unit), None)
-    except:
-        return None
+🧠 *SOLVE*
+`/solve x^2-4=0`
+
+🔗 *URL SHORTENER*
+`/short https://example.com`
+
+📂 *EXPORT HISTORY*
+`/export`
+
+🔄 *UNIT CONVERTER*
+`10 km to m`
+
+📜 *DATABASE*
+`/dbhistory`
+
+━━━━━━━━━━━━━━━━━━━
+💡 *Try:* `2²`, `cos 60`, `sin(30)`
+"""
+
+# ================= BUTTONS =================
+def help_buttons():
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("📈 Plot", callback_data="plot"),
+        InlineKeyboardButton("🧠 Solve", callback_data="solve")
+    )
+    m.row(
+        InlineKeyboardButton("🔗 Short URL", callback_data="short"),
+        InlineKeyboardButton("📂 Export", callback_data="export")
+    )
+    return m
 
 # ================= PLOT =================
 def plot(expr):
@@ -158,7 +147,7 @@ def plot(expr):
             f_np = sp.lambdify(x, sp.sympify(preprocess(f)), 'numpy')
             plt.plot(xs, f_np(xs))
         except:
-            continue
+            pass
 
     buf = BytesIO()
     plt.savefig(buf, format='png')
@@ -166,43 +155,25 @@ def plot(expr):
     plt.close()
     return buf
 
-# ================= BUTTONS =================
-def buttons():
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("📘 Help", callback_data="help"),
-        InlineKeyboardButton("📈 Plot", callback_data="plot")
-    )
-    m.row(
-        InlineKeyboardButton("🧠 Solve", callback_data="solve"),
-        InlineKeyboardButton("🤖 AI", callback_data="ai")
-    )
-    m.row(
-        InlineKeyboardButton("💾 History", callback_data="history")
-    )
-    return m
-
 # ================= WEBHOOK =================
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
 
-    # BUTTON HANDLER
+    # BUTTONS
     if "callback_query" in data:
         call = data["callback_query"]
         chat_id = call["message"]["chat"]["id"]
         btn = call["data"]
 
-        if btn == "help":
-            await asyncio.to_thread(bot.send_message, chat_id, "/help")
-        elif btn == "plot":
+        if btn == "plot":
             await asyncio.to_thread(bot.send_message, chat_id, "`/plot sin(x)`")
         elif btn == "solve":
             await asyncio.to_thread(bot.send_message, chat_id, "`/solve x^2-4=0`")
-        elif btn == "ai":
-            await asyncio.to_thread(bot.send_message, chat_id, "`/ai explain math`")
-        elif btn == "history":
-            await asyncio.to_thread(bot.send_message, chat_id, "`/dbhistory`")
+        elif btn == "short":
+            await asyncio.to_thread(bot.send_message, chat_id, "`/short https://example.com`")
+        elif btn == "export":
+            await asyncio.to_thread(bot.send_message, chat_id, "`/export`")
 
         return {"ok": True}
 
@@ -214,72 +185,58 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # IMAGE OCR SAFE
-    if "photo" in msg:
-        file = bot.get_file(msg["photo"][-1]["file_id"])
-        data_file = bot.download_file(file.file_path)
-
-        with open("img.png","wb") as f:
-            f.write(data_file)
-
-        extracted = solve_image("img.png")
-
-        if not extracted:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ OCR not supported")
-            return {"ok": True}
-
-        result = evaluate(extracted, chat_id)
-
-        await asyncio.to_thread(bot.send_message, chat_id, f"📸 `{extracted}`")
-
-        if result:
-            await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
-
-        return {"ok": True}
-
     # START (UNCHANGED)
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "👋 Welcome to Most Advanced Calculator 🤖\n\nMade by @Sudhakaran12\n\n👉 Use /help to see all features",
-            reply_markup=buttons()
+            "👋 Welcome to Most Advanced Calculator 🤖\n\nMade by @Sudhakaran12\n\n👉 Use /help to see all features"
         )
 
+    # HELP (PRO DESIGN)
     elif lower == "/help":
-        await asyncio.to_thread(bot.send_message, chat_id, "/help")
+        await asyncio.to_thread(
+            bot.send_message,
+            chat_id,
+            get_help(),
+            reply_markup=help_buttons()
+        )
 
     elif lower.startswith("/short"):
-        await asyncio.to_thread(bot.send_message, chat_id, shorten_url(text[6:]))
-
-    elif lower == "/export":
-        file = export_history(chat_id)
-        if file:
-            with open(file,"rb") as f:
-                await asyncio.to_thread(bot.send_document, chat_id, f)
-        else:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ No history")
-
-    elif " to " in lower:
-        res = unit_convert(lower)
-        if res:
-            await asyncio.to_thread(bot.send_message, chat_id, f"🔄 {res}")
+        url = text[6:]
+        res = requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
+        await asyncio.to_thread(bot.send_message, chat_id, res)
 
     elif lower.startswith("/plot"):
         await asyncio.to_thread(bot.send_photo, chat_id, plot(text[5:]))
-
-    elif lower.startswith("/ai"):
-        await asyncio.to_thread(bot.send_message, chat_id, ai_chat(text[3:]))
 
     elif lower.startswith("/solve"):
         res = sp.solve(sp.sympify(text[6:].replace("=","-(")+")"))
         await asyncio.to_thread(bot.send_message, chat_id, f"🧠 `{res}`")
 
-    elif lower == "/dbhistory":
+    elif lower == "/export":
         cursor.execute("SELECT expr,result FROM history WHERE chat_id=?", (chat_id,))
         rows = cursor.fetchall()
-        txt = "\n".join([f"{e}={r}" for e,r in rows[-10:]]) if rows else "No history"
-        await asyncio.to_thread(bot.send_message, chat_id, txt)
+
+        if not rows:
+            await asyncio.to_thread(bot.send_message, chat_id, "❌ No history")
+        else:
+            file = f"history_{chat_id}.txt"
+            with open(file,"w") as f:
+                for e,r in rows:
+                    f.write(f"{e}={r}\n")
+            with open(file,"rb") as f:
+                await asyncio.to_thread(bot.send_document, chat_id, f)
+
+    elif " to " in lower:
+        try:
+            v,u1,_,u2 = lower.split()
+            v=float(v)
+            conv = {("km","m"):1000,("m","km"):0.001}
+            res = v*conv[(u1,u2)]
+            await asyncio.to_thread(bot.send_message, chat_id, f"🔄 {res}")
+        except:
+            pass
 
     else:
         result = evaluate(text, chat_id)
