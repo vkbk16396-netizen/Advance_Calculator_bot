@@ -8,6 +8,7 @@ from io import BytesIO
 import telebot
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 app = FastAPI()
 
@@ -27,10 +28,8 @@ chat_variables = {}
 def preprocess_expression(expr: str) -> str:
     expr = expr.lower().strip()
 
-    # sin 30 → sin(30)
     expr = re.sub(r'(sin|cos|tan)\s+(\d+)', r'\1(\2)', expr)
 
-    # superscript powers
     superscripts = {
         "⁰":"^0","¹":"^1","²":"^2","³":"^3","⁴":"^4",
         "⁵":"^5","⁶":"^6","⁷":"^7","⁸":"^8","⁹":"^9"
@@ -38,10 +37,8 @@ def preprocess_expression(expr: str) -> str:
     for k, v in superscripts.items():
         expr = expr.replace(k, v)
 
-    # symbols
     expr = expr.replace("×", "*").replace("÷", "/")
 
-    # % → /100
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
 
     return expr
@@ -98,7 +95,7 @@ def evaluate(expr, chat_id):
 
     safe = get_safe_locals(chat_id)
 
-    # Variable assignment
+    # variable assignment
     if "=" in expr and expr.count("=") == 1:
         left, right = expr.split("=")
         if left.strip().isidentifier():
@@ -113,9 +110,7 @@ def evaluate(expr, chat_id):
             return str(res)
 
         return float(res.evalf())
-
-    except Exception as e:
-        print("ERROR:", e)
+    except:
         return None
 
 # ================= HELP =================
@@ -166,6 +161,31 @@ async def root():
 async def webhook(request: Request):
     data = await request.json()
 
+    # ===== BUTTON HANDLER =====
+    if "callback_query" in data:
+        call = data["callback_query"]
+        chat_id = call["message"]["chat"]["id"]
+        data_btn = call["data"]
+
+        if data_btn == "help":
+            await asyncio.to_thread(bot.send_message, chat_id, get_help())
+
+        elif data_btn == "features":
+            await asyncio.to_thread(
+                bot.send_message,
+                chat_id,
+                "🔥 *Features:*\n\n"
+                "🧮 Calculator\n📐 Trigonometry\n📊 Calculus\n📦 Matrix\n📈 Graph\n📐 LaTeX\n🎲 Probability\n🐍 Python"
+            )
+
+        elif data_btn == "plot":
+            await asyncio.to_thread(bot.send_message, chat_id, "📈 Use:\n`/plot sin(x)`")
+
+        elif data_btn == "calc":
+            await asyncio.to_thread(bot.send_message, chat_id, "🧮 Try:\n`2+2`\n`sqrt(16)`")
+
+        return {"ok": True}
+
     if "message" not in data:
         return {"ok": True}
 
@@ -176,10 +196,26 @@ async def webhook(request: Request):
 
     # ===== START =====
     if lower == "/start":
+        markup = InlineKeyboardMarkup()
+        markup.row(
+            InlineKeyboardButton("📘 Help", callback_data="help"),
+            InlineKeyboardButton("📊 Features", callback_data="features")
+        )
+        markup.row(
+            InlineKeyboardButton("📈 Plot", callback_data="plot"),
+            InlineKeyboardButton("📐 Calculator", callback_data="calc")
+        )
+
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "👋 *Advanced Calculator Bot*\n\nType /help"
+            "✨ *Welcome to Most Advanced Calculator* 🤖\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "🚀 *Powerful • Fast • Smart*\n\n"
+            "👨‍💻 *Made by:* @Sudhakaran12\n\n"
+            "👉 Use /help to explore all features\n\n"
+            "💡 *Tip:* Try `2²`, `cos 60`, `sin(30)`",
+            reply_markup=markup
         )
 
     # ===== HELP =====
@@ -203,7 +239,7 @@ async def webhook(request: Request):
 
     elif lower == "/clear":
         chat_history[chat_id] = []
-        await asyncio.to_thread(bot.send_message, chat_id, "Cleared")
+        await asyncio.to_thread(bot.send_message, chat_id, "🗑 Cleared")
 
     # ===== VARIABLES =====
     elif lower == "/vars":
@@ -213,7 +249,7 @@ async def webhook(request: Request):
 
     elif lower == "/clearvars":
         chat_variables[chat_id] = {}
-        await asyncio.to_thread(bot.send_message, chat_id, "Cleared")
+        await asyncio.to_thread(bot.send_message, chat_id, "🗑 Cleared")
 
     # ===== PLOT =====
     elif lower.startswith("/plot"):
@@ -260,7 +296,7 @@ async def webhook(request: Request):
 
     # ===== CALCULATE =====
     else:
-        result = ervaluate(text, chat_id)
+        result = evaluate(text, chat_id)
         if result is not None:
             add_history(chat_id, text, result)
             await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
