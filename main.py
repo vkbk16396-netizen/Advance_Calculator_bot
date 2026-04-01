@@ -11,8 +11,8 @@ import pytesseract
 from PIL import Image
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
-from openai import OpenAI
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from openai import OpenAI
 
 app = FastAPI()
 
@@ -21,7 +21,12 @@ TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
-client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ✅ SAFE AI INIT (NO CRASH)
+if OPENAI_API_KEY:
+    client = OpenAI(api_key=OPENAI_API_KEY)
+else:
+    client = None
 
 # ================= DATABASE =================
 conn = sqlite3.connect("history.db", check_same_thread=False)
@@ -74,6 +79,9 @@ def save_history(chat_id, expr, result):
 
 # ================= AI =================
 def ai_chat(prompt):
+    if not client:
+        return "❌ AI not configured. Add OPENAI_API_KEY in Railway."
+
     try:
         res = client.chat.completions.create(
             model="gpt-5-mini",
@@ -83,8 +91,8 @@ def ai_chat(prompt):
             ]
         )
         return res.choices[0].message.content
-    except:
-        return "❌ AI Error"
+    except Exception as e:
+        return f"❌ AI Error: {e}"
 
 # ================= OCR =================
 def solve_image(path):
@@ -177,7 +185,7 @@ def get_help():
 💾 DB → /dbhistory
 """
 
-# ================= BUTTONS =================
+# ================= BUTTON UI =================
 def main_buttons():
     markup = InlineKeyboardMarkup()
     markup.row(
@@ -250,15 +258,14 @@ async def webhook(request: Request):
         if result:
             await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
 
-        return {"ok": True}
+        return {"ok": True} the 
 
-    # START WITH BUTTONS
+    # START
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "🤖 *Most Advanced Calculator*\n\n"
-            "👉 Use buttons below or /help",
+            "🤖 *Most Advanced Calculator*\n\n👉 Use buttons below or /help",
             reply_markup=main_buttons()
         )
 
@@ -273,6 +280,8 @@ async def webhook(request: Request):
         buf = plot(text[5:].strip())
         if buf:
             await asyncio.to_thread(bot.send_photo, chat_id, buf)
+        else:
+            await asyncio.to_thread(bot.send_message, chat_id, "❌ Invalid plot input")
 
     elif lower.startswith("/ai"):
         reply = ai_chat(text[3:].strip())
