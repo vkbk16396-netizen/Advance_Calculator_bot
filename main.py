@@ -25,7 +25,7 @@ conn.commit()
 
 chat_variables = {}
 
-# ================= ULTRA PREPROCESS =================
+# ================= PREPROCESS =================
 def preprocess(expr):
     expr = expr.lower().strip()
     if not expr:
@@ -55,17 +55,20 @@ def preprocess(expr):
 
     expr = new_expr
 
-    # fractions
+    # FULL fraction support
     fractions = {
         "½":"1/2","¼":"1/4","¾":"3/4",
         "⅓":"1/3","⅔":"2/3",
-        "⅕":"1/5","⅖":"2/5","⅗":"3/5","⅘":"4/5"
+        "⅕":"1/5","⅖":"2/5","⅗":"3/5","⅘":"4/5",
+        "⅙":"1/6","⅚":"5/6",
+        "⅛":"1/8","⅜":"3/8","⅝":"5/8","⅞":"7/8"
     }
-    for k,v in fractions.items():
-        expr = expr.replace(k,v)
 
-    # mixed numbers → 5¾ = (5+3/4)
-    expr = re.sub(r'(\d+)(\d+/\d+)', r'(\1+\2)', expr)
+    for k,v in fractions.items():
+        expr = expr.replace(k, v)
+
+    # mixed numbers (5¾ → 5+3/4)
+    expr = re.sub(r'(\d+)\s*(\d+/\d+)', r'(\1+\2)', expr)
 
     # percent
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
@@ -188,11 +191,11 @@ async def webhook(request: Request):
             file = f"history_{chat_id}.txt"
             with open(file,"w") as f:
                 for e,r in rows:
-                    f.write(f"{e}={r}\n")
+                    f.write(f"{e} = {r}\n")
             with open(file,"rb") as f:
                 await asyncio.to_thread(bot.send_document, chat_id, f)
 
-    # ===== UNIT =====
+    # ===== UNIT CONVERTER =====
     elif " to " in lower:
         try:
             v,u1,_,u2 = lower.split()
