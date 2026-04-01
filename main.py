@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import telebot
 from fastapi import FastAPI, Request
-
 from sympy.stats import Normal, density
 
 app = FastAPI()
@@ -23,7 +22,6 @@ bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 chat_angle_mode = {}
 chat_history = {}
 chat_variables = {}
-chat_custom_funcs = {}
 
 # ================= PREPROCESS =================
 def preprocess_expression(expr: str) -> str:
@@ -44,7 +42,7 @@ def preprocess_expression(expr: str) -> str:
     expr = expr.replace("×", "*").replace("÷", "/")
 
     # % → /100
-    expr = re.sub(r'(\d+)%', r'(\1/100)', expr)
+    expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
 
     return expr
 
@@ -100,7 +98,7 @@ def evaluate(expr, chat_id):
 
     safe = get_safe_locals(chat_id)
 
-    # variable assignment
+    # Variable assignment
     if "=" in expr and expr.count("=") == 1:
         left, right = expr.split("=")
         if left.strip().isidentifier():
@@ -110,8 +108,14 @@ def evaluate(expr, chat_id):
 
     try:
         res = sp.sympify(expr, locals=safe)
-        return res if res.free_symbols else float(res.evalf())
+
+        if res.free_symbols:
+            return str(res)
+
+        return float(res.evalf())
+
     except Exception as e:
+        print("ERROR:", e)
         return None
 
 # ================= HELP =================
@@ -133,9 +137,6 @@ Use `/deg` `/rad`
 📦 MATRIX
 `Matrix([[1,2],[3,4]])`
 
-📊 STATS
-Coming soon
-
 🎲 PROBABILITY
 `pdf(Normal(0,1),0)`
 
@@ -153,11 +154,6 @@ Coming soon
 
 COMMANDS:
 /history /vars /clear /clearvars
-
-🔥 Try:
-2²
-cos 60
-sin(30)
 """
 
 # ================= ROOT =================
@@ -264,7 +260,7 @@ async def webhook(request: Request):
 
     # ===== CALCULATE =====
     else:
-        result = evaluate(text, chat_id)
+        result = ervaluate(text, chat_id)
         if result is not None:
             add_history(chat_id, text, result)
             await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
