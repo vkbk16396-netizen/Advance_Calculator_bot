@@ -10,7 +10,6 @@ import sqlite3
 import requests
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 app = FastAPI()
 
@@ -26,7 +25,7 @@ conn.commit()
 
 chat_variables = {}
 
-# ================= PREPROCESS (FIXED) =================
+# ================= ULTRA PREPROCESS =================
 def preprocess(expr):
     expr = expr.lower().strip()
     if not expr:
@@ -35,21 +34,38 @@ def preprocess(expr):
     # trig fix
     expr = re.sub(r'(sin|cos|tan)\s+(\d+)', r'\1(\2)', expr)
 
-    # superscripts
+    # superscripts → power
     superscripts = {
-        "⁰":"^0","¹":"^1","²":"^2","³":"^3","⁴":"^4",
-        "⁵":"^5","⁶":"^6","⁷":"^7","⁸":"^8","⁹":"^9"
+        "⁰":"0","¹":"1","²":"2","³":"3","⁴":"4",
+        "⁵":"5","⁶":"6","⁷":"7","⁸":"8","⁹":"9"
     }
-    for k,v in superscripts.items():
-        expr = expr.replace(k,v)
+
+    new_expr = ""
+    power_mode = False
+
+    for ch in expr:
+        if ch in superscripts:
+            if not power_mode:
+                new_expr += "**"
+                power_mode = True
+            new_expr += superscripts[ch]
+        else:
+            power_mode = False
+            new_expr += ch
+
+    expr = new_expr
 
     # fractions
     fractions = {
         "½":"1/2","¼":"1/4","¾":"3/4",
-        "⅓":"1/3","⅔":"2/3"
+        "⅓":"1/3","⅔":"2/3",
+        "⅕":"1/5","⅖":"2/5","⅗":"3/5","⅘":"4/5"
     }
     for k,v in fractions.items():
         expr = expr.replace(k,v)
+
+    # mixed numbers → 5¾ = (5+3/4)
+    expr = re.sub(r'(\d+)(\d+/\d+)', r'(\1+\2)', expr)
 
     # percent
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
@@ -57,7 +73,7 @@ def preprocess(expr):
     # symbols
     expr = expr.replace("×","*").replace("÷","/")
 
-    return expr.replace("^","**")
+    return expr
 
 # ================= SAFE =================
 def safe_locals(chat_id):
@@ -82,7 +98,6 @@ def evaluate(expr, chat_id):
     if not expr:
         return None
 
-    # matrix fix
     if expr.startswith("matrix"):
         try:
             return sp.Matrix(eval(expr[6:], {"__builtins__":{}}))
@@ -135,7 +150,7 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # ================= START (UNCHANGED) =================
+    # ===== START (UNCHANGED) =====
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
@@ -143,26 +158,26 @@ async def webhook(request: Request):
             "👋 Welcome to Most Advanced Calculator 🤖\n\nMade by @Sudhakaran12\n\n👉 Use /help to see all features"
         )
 
-    # ================= HELP (UNCHANGED) =================
+    # ===== HELP (UNCHANGED) =====
     elif lower == "/help":
         await asyncio.to_thread(bot.send_message, chat_id, "/help")
 
-    # ================= URL =================
+    # ===== SHORT URL =====
     elif lower.startswith("/short"):
         url = text[6:]
         res = requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
         await asyncio.to_thread(bot.send_message, chat_id, res)
 
-    # ================= PLOT =================
+    # ===== PLOT =====
     elif lower.startswith("/plot"):
         await asyncio.to_thread(bot.send_photo, chat_id, plot(text[5:]))
 
-    # ================= SOLVE =================
+    # ===== SOLVE =====
     elif lower.startswith("/solve"):
         res = sp.solve(sp.sympify(text[6:].replace("=","-(")+")"))
         await asyncio.to_thread(bot.send_message, chat_id, f"🧠 `{res}`")
 
-    # ================= EXPORT =================
+    # ===== EXPORT =====
     elif lower == "/export":
         cursor.execute("SELECT expr,result FROM history WHERE chat_id=?", (chat_id,))
         rows = cursor.fetchall()
@@ -177,18 +192,23 @@ async def webhook(request: Request):
             with open(file,"rb") as f:
                 await asyncio.to_thread(bot.send_document, chat_id, f)
 
-    # ================= UNIT =================
+    # ===== UNIT =====
     elif " to " in lower:
         try:
             v,u1,_,u2 = lower.split()
             v=float(v)
-            conv = {("km","m"):1000,("m","km"):0.001}
+            conv = {
+                ("km","m"):1000,
+                ("m","km"):0.001,
+                ("kg","g"):1000,
+                ("g","kg"):0.001
+            }
             res = v*conv[(u1,u2)]
             await asyncio.to_thread(bot.send_message, chat_id, f"🔄 {res}")
         except:
             pass
 
-    # ================= CALCULATE =================
+    # ===== CALCULATE =====
     else:
         result = evaluate(text, chat_id)
         if result is not None:
