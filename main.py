@@ -150,20 +150,58 @@ def buttons():
     )
     return m
 
-# ================= HELP =================
+# ================= HELP (UPDATED ONLY) =================
 def get_help():
     return """
-📘 *CALCULATOR GUIDE*
+╭━━━━━━━━━━━━━━━━━━━━━━╮
+📘 *ULTIMATE CALCULATOR GUIDE*
+╰━━━━━━━━━━━━━━━━━━━━━━╯
 
-🧮 2+2, 5%
-📐 sin(30)
-📊 diff(x^2,x)
-📦 Matrix([[1,2],[3,4]])
-🧠 /solve x^2-4=0
-📈 /plot sin(x)
-🤖 /ai explain
-📸 Send image
-💾 /dbhistory
+🧮 BASIC
+`2+2` `5^2` `5%`
+
+📐 TRIG
+`sin(30)` `cos 60`
+
+📊 CALCULUS
+`diff(x^2,x)`  
+`integrate(x^2,x)`
+
+📦 MATRIX
+`Matrix([[1,2],[3,4]])`
+`det(Matrix(...))`
+`inv(Matrix(...))`
+
+🧠 SOLVE
+`/solve x^2-4=0`
+
+📈 GRAPH
+`/plot sin(x)`
+`/plot sin(x),cos(x)`
+
+📊 STATS
+`mean(1,2,3)`
+`variance(1,2,3)`
+
+📸 IMAGE
+Send photo → auto solve
+
+🤖 AI
+`/ai explain integration`
+
+💾 DATABASE
+`/dbhistory`
+
+📂 VARIABLES
+`x=10`
+`x+5`
+
+💡 TIPS
+• Use ^ or ²  
+• Use /plot for graphs  
+• Use /solve for equations  
+
+🚀 Enjoy!
 """
 
 # ================= WEBHOOK =================
@@ -171,7 +209,6 @@ def get_help():
 async def webhook(request: Request):
     data = await request.json()
 
-    # BUTTONS
     if "callback_query" in data:
         call = data["callback_query"]
         chat_id = call["message"]["chat"]["id"]
@@ -198,7 +235,6 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # IMAGE
     if "photo" in msg:
         file = bot.get_file(msg["photo"][-1]["file_id"])
         data_file = bot.download_file(file.file_path)
@@ -216,21 +252,11 @@ async def webhook(request: Request):
 
         return {"ok": True}
 
-    # START (DESIGNED)
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-            " 🤖 *Most Advanced Calculator*\n"
-            "╰━━━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            "🚀 Fast • Smart • Powerful\n\n"
-            "🧮 Solve math instantly\n"
-            "📈 Plot graphs\n"
-            "📦 Matrix operations\n"
-            "📸 Scan images\n"
-            "🤖 AI assistant\n\n"
-            "👇 Use buttons below",
+            "🤖 *Most Advanced Calculator*\n\n👉 Use buttons below or /help",
             reply_markup=buttons()
         )
 
