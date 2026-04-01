@@ -65,66 +65,17 @@ def get_safe_locals(chat_id):
         **chat_variables.get(chat_id, {})
     }
 
-# ================= UNIT CONVERTER =================
-def convert_units(expr):
-    try:
-        val, rest = expr.split(" ", 1)
-        val = float(val)
-        unit_from, unit_to = rest.split("to")
-
-        unit_from = unit_from.strip()
-        unit_to = unit_to.strip()
-
-        conv = {
-            "km":1000,"m":1,"cm":0.01,
-            "kg":1,"g":0.001
-        }
-
-        return val * conv[unit_from] / conv[unit_to]
-    except:
-        return None
-
-# ================= SOLVE =================
-def solve_equation(expr):
-    x = sp.symbols('x')
-    expr = preprocess_expression(expr)
-    eq = sp.sympify(expr.replace("=", "-(")+")")
-    return sp.solve(eq, x)
-
-# ================= PLOT =================
-def plot_multi(expr):
-    x = sp.symbols('x')
-    funcs = expr.split(",")
-
-    xs = np.linspace(-10, 10, 400)
-    plt.figure()
-
-    for f in funcs:
-        f = sp.lambdify(x, sp.sympify(preprocess_expression(f)), 'numpy')
-        plt.plot(xs, f(xs))
-
-    plt.grid()
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-    return buf
-
 # ================= EVALUATE =================
 def evaluate(expr, chat_id):
     expr = preprocess_expression(expr)
     expr = expr.replace("^", "**")
 
-    # UNIT
-    if " to " in expr:
-        res = convert_units(expr)
-        if res is not None:
-            return res
-
-    # MATRIX FIX
+    # 🔥 MATRIX FIX
     if expr.startswith("matrix"):
         try:
-            return sp.Matrix(eval(expr, {"__builtins__": {}}))
+            inside = expr[6:]
+            data = eval(inside, {"__builtins__": {}}, {})
+            return sp.Matrix(data)
         except:
             return None
 
@@ -136,27 +87,32 @@ def evaluate(expr, chat_id):
         if left.strip().isidentifier():
             val = sp.sympify(right, locals=safe)
             chat_variables.setdefault(chat_id, {})[left.strip()] = val
-            return f"{left.strip()} = {val}"
+            return f"📌 `{left.strip()}` = `{val}`"
 
     try:
         res = sp.sympify(expr, locals=safe)
-        return str(res) if res.free_symbols else float(res.evalf())
+
+        if res.free_symbols:
+            return str(res)
+
+        return float(res.evalf())
+
     except:
         return None
 
 # ================= HELP =================
 def get_help():
     return """
-📘 *ULTIMATE CALCULATOR PRO MAX*
+╔══════════════════════╗
+📘 *ULTIMATE CALCULATOR*
+╚══════════════════════╝
 
-🧮 Basic: `2+2`, `5%`
-📐 Trig: `sin(30)`
-📊 Calc: `diff(x^2,x)`
-📦 Matrix: `Matrix([[1,2],[3,4]])`
-📊 Stats: `mean(1,2,3)`
-📏 Units: `10 km to m`
-📈 Graph: `/plot sin(x),cos(x)`
-🧠 Solve: `/solve x^2-4=0`
+🧮 `2+2` `5%`
+📐 `sin(30)`
+📊 `diff(x^2,x)`
+📦 `Matrix([[1,2],[3,4]])`
+📊 `mean(1,2,3)`
+📈 `/plot sin(x)`
 """
 
 # ================= ROOT =================
@@ -169,7 +125,7 @@ async def root():
 async def webhook(request: Request):
     data = await request.json()
 
-    # BUTTONS
+    # ===== BUTTONS =====
     if "callback_query" in data:
         call = data["callback_query"]
         chat_id = call["message"]["chat"]["id"]
@@ -191,7 +147,7 @@ async def webhook(request: Request):
     text = msg.get("text", "").strip()
     lower = text.lower()
 
-    # START
+    # ===== START =====
     if lower == "/start":
         markup = InlineKeyboardMarkup()
         markup.row(
@@ -202,26 +158,51 @@ async def webhook(request: Request):
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "✨ *Most Advanced Calculator 🤖*\n\n🚀 PRO MAX MODE ENABLED",
+            "╔══════════════════════╗\n"
+            "✨ *Most Advanced Calculator* 🤖\n"
+            "╚══════════════════════╝\n\n"
+            "👋 Welcome to *Most Advanced Calculator*\n\n"
+            "👨‍💻 *Made by:* @Sudhakaran12\n\n"
+            "👉 Use /help to see all features",
             reply_markup=markup
         )
 
+    # ===== HELP =====
     elif lower == "/help":
         await asyncio.to_thread(bot.send_message, chat_id, get_help())
 
+    # ===== PLOT =====
     elif lower.startswith("/plot"):
-        buf = plot_multi(text[5:].strip())
-        await asyncio.to_thread(bot.send_photo, chat_id, buf)
+        exprs = text[5:].strip().split(",")
+        try:
+            x = sp.symbols('x')
+            xs = np.linspace(-10, 10, 400)
 
-    elif lower.startswith("/solve"):
-        res = solve_equation(text[6:].strip())
-        await asyncio.to_thread(bot.send_message, chat_id, f"🧠 `{res}`")
+            plt.figure()
 
+            for ex in exprs:
+                f = sp.lambdify(x, sp.sympify(preprocess_expression(ex)), 'numpy')
+                plt.plot(xs, f(xs), label=ex)
+
+            plt.legend()
+            plt.grid()
+
+            buf = BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            plt.close()
+
+            await asyncio.to_thread(bot.send_photo, chat_id, buf)
+        except:
+            await asyncio.to_thread(bot.send_message, chat_id, "❌ Plot error")
+
+    # ===== CALCULATE =====
     else:
         result = evaluate(text, chat_id)
+
         if result is not None:
             add_history(chat_id, text, result)
-            await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
+            await asyncio.to_thread(bot.send_message, chat_id, f"✅\n`{result}`")
         else:
             await asyncio.to_thread(bot.send_message, chat_id, "❌ Invalid input")
 
