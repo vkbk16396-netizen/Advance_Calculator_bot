@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import telebot
 import sqlite3
-import pytesseract
 import requests
 from PIL import Image
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from openai import OpenAI
+import pytesseract
 
 app = FastAPI()
 
@@ -77,22 +77,24 @@ def ai_chat(prompt):
     except:
         return "❌ AI error"
 
-# ================= OCR =================
+# ================= OCR SAFE =================
 def solve_image(path):
-    return pytesseract.image_to_string(Image.open(path))
+    try:
+        return pytesseract.image_to_string(Image.open(path))
+    except:
+        return None
 
 # ================= URL SHORTENER =================
 def shorten_url(url):
     try:
         return requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
     except:
-        return "❌ Failed to shorten URL"
+        return "❌ Failed"
 
 # ================= EXPORT =================
 def export_history(chat_id):
     cursor.execute("SELECT expr, result FROM history WHERE chat_id=?", (chat_id,))
     rows = cursor.fetchall()
-
     if not rows:
         return None
 
@@ -100,7 +102,6 @@ def export_history(chat_id):
     with open(filename, "w") as f:
         for e, r in rows:
             f.write(f"{e} = {r}\n")
-
     return filename
 
 # ================= UNIT =================
@@ -120,7 +121,7 @@ def unit_convert(text):
             ("m","cm"): value*100,
         }
 
-        return conv.get((from_unit, to_unit), "❌ Not supported")
+        return conv.get((from_unit, to_unit), None)
     except:
         return None
 
@@ -151,24 +152,12 @@ def plot(expr):
     xs = np.linspace(-10,10,400)
 
     plt.figure()
-    valid = False
-
     for f in funcs:
-        f = f.strip()
-        if not f:
-            continue
         try:
             f_np = sp.lambdify(x, sp.sympify(preprocess(f)), 'numpy')
-            plt.plot(xs, f_np(xs), label=f)
-            valid = True
+            plt.plot(xs, f_np(xs))
         except:
             continue
-
-    if not valid:
-        return None
-
-    plt.legend()
-    plt.grid()
 
     buf = BytesIO()
     plt.savefig(buf, format='png')
@@ -192,10 +181,6 @@ def buttons():
     )
     return m
 
-# ================= HELP (UNCHANGED) =================
-def get_help():
-    return "Use /help from your existing version"
-
 # ================= WEBHOOK =================
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -207,7 +192,7 @@ async def webhook(request: Request):
         btn = call["data"]
 
         if btn == "help":
-            await asyncio.to_thread(bot.send_message, chat_id, get_help())
+            await asyncio.to_thread(bot.send_message, chat_id, "/help")
         elif btn == "plot":
             await asyncio.to_thread(bot.send_message, chat_id, "`/plot sin(x)`")
         elif btn == "solve":
@@ -227,7 +212,7 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # IMAGE
+    # IMAGE SAFE
     if "photo" in msg:
         file = bot.get_file(msg["photo"][-1]["file_id"])
         data_file = bot.download_file(file.file_path)
@@ -236,8 +221,12 @@ async def webhook(request: Request):
             f.write(data_file)
 
         extracted = solve_image("img.png")
-        result = evaluate(extracted, chat_id)
 
+        if not extracted:
+            await asyncio.to_thread(bot.send_message, chat_id, "❌ OCR not supported")
+            return {"ok": True}
+
+        result = evaluate(extracted, chat_id)
         await asyncio.to_thread(bot.send_message, chat_id, f"📸 `{extracted}`")
 
         if result:
@@ -254,12 +243,8 @@ async def webhook(request: Request):
             reply_markup=buttons()
         )
 
-    elif lower == "/help":
-        await asyncio.to_thread(bot.send_message, chat_id, get_help())
-
     elif lower.startswith("/short"):
-        url = text[6:].strip()
-        await asyncio.to_thread(bot.send_message, chat_id, f"🔗 {shorten_url(url)}")
+        await asyncio.to_thread(bot.send_message, chat_id, shorten_url(text[6:]))
 
     elif lower == "/export":
         file = export_history(chat_id)
@@ -275,9 +260,7 @@ async def webhook(request: Request):
             await asyncio.to_thread(bot.send_message, chat_id, f"🔄 {res}")
 
     elif lower.startswith("/plot"):
-        buf = plot(text[5:].strip())
-        if buf:
-            await asyncio.to_thread(bot.send_photo, chat_id, buf)
+        await asyncio.to_thread(bot.send_photo, chat_id, plot(text[5:]))
 
     elif lower.startswith("/ai"):
         await asyncio.to_thread(bot.send_message, chat_id, ai_chat(text[3:]))
