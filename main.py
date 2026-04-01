@@ -1,6 +1,5 @@
 import os
 import re
-import math
 import sympy as sp
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,15 +7,15 @@ from io import BytesIO
 from fastapi import FastAPI, Request
 import telebot
 
-# ================== CONFIG ==================
+# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 app = FastAPI()
 
-user_mode = {}     # deg/rad
-user_history = {}  # history storage
+user_mode = {}
+user_history = {}
 
-# ================== NORMALIZE INPUT ==================
+# ================= NORMALIZE =================
 def normalize_input(expr: str) -> str:
     superscript_map = {
         '⁰': '0','¹': '1','²': '2','³': '3',
@@ -56,32 +55,38 @@ def normalize_input(expr: str) -> str:
 
     return result
 
+# ================= FIX FUNCTIONS =================
+def fix_functions(expr: str) -> str:
+    expr = expr.lower()
 
-# ================== SAFE EVAL ==================
+    # sin 30 → sin(30)
+    expr = re.sub(r'\b(sin|cos|tan|log|sqrt)\s+([0-9\.]+)', r'\1(\2)', expr)
+
+    # tan45 → tan(45)
+    expr = re.sub(r'\b(sin|cos|tan|log|sqrt)([0-9\.]+)', r'\1(\2)', expr)
+
+    return expr
+
+# ================= EVALUATE =================
 def evaluate(expr, user_id):
-    expr = normalize_input(expr)
-    expr = expr.replace("^", "**")
-
-    x = sp.symbols('x')
-
     try:
-        result = sp.sympify(expr)
+        expr = normalize_input(expr)
+        expr = fix_functions(expr)
+        expr = expr.replace("^", "**")
 
-        # Handle trig mode
+        # Degree mode conversion
         if user_mode.get(user_id, "rad") == "deg":
-            result = result.subs({
-                sp.sin(x): sp.sin(sp.rad(x)),
-                sp.cos(x): sp.cos(sp.rad(x)),
-                sp.tan(x): sp.tan(sp.rad(x))
-            })
+            expr = re.sub(r'sin\((.*?)\)', r'sin(\1*pi/180)', expr)
+            expr = re.sub(r'cos\((.*?)\)', r'cos(\1*pi/180)', expr)
+            expr = re.sub(r'tan\((.*?)\)', r'tan(\1*pi/180)', expr)
 
-        return float(result.evalf())
+        result = sp.sympify(expr).evalf()
+        return float(result)
 
-    except Exception as e:
-        return f"❌ Invalid input"
+    except:
+        return "❌ Invalid input"
 
-
-# ================== COMMANDS ==================
+# ================= COMMANDS =================
 @bot.message_handler(commands=['start'])
 def start(msg):
     bot.reply_to(msg,
@@ -92,19 +97,75 @@ def start(msg):
 
 @bot.message_handler(commands=['help'])
 def help_cmd(msg):
-    bot.reply_to(msg,
-        "🧮 Calculator Commands:\n\n"
-        "/deg → Degree mode\n"
-        "/rad → Radian mode\n"
-        "/plot → Graph function\n"
-        "/latex → Show LaTeX\n"
-        "/py → Python eval\n"
-        "/history → Show history\n"
-        "/vars → Variables\n"
-        "/clear → Clear history\n\n"
-        "✅ Supports:\n"
-        "5^2, 5⁵, 6⅞, sin(30), log(10)"
-    )
+    bot.reply_to(msg, """📘 ULTIMATE CALCULATOR HELP
+
+━━━━━━━━━━━━━━━━━━━━━━
+🧮 BASIC
+2+2, 5^2, 10/3
+
+📊 ADVANCED
+sqrt(16)
+log(10)
+factorial(5)
+
+━━━━━━━━━━━━━━━━━━━━━━
+📐 TRIGONOMETRY
+sin(30)
+cos 60
+tan(45)
+
+Use:
+/deg or /rad
+
+━━━━━━━━━━━━━━━━━━━━━━
+📈 CALCULUS
+diff(x^2,x)
+integrate(x^2,x)
+
+━━━━━━━━━━━━━━━━━━━━━━
+📦 MATRIX
+Matrix([[1,2],[3,4]])
+
+━━━━━━━━━━━━━━━━━━━━━━
+📊 STATISTICS
+mean(1,2,3)
+variance(1,2,3)
+
+━━━━━━━━━━━━━━━━━━━━━━
+🎲 PROBABILITY
+Normal(0,1)
+pdf(Normal(0,1),0)
+
+━━━━━━━━━━━━━━━━━━━━━━
+📏 UNIT
+10 km to m
+
+━━━━━━━━━━━━━━━━━━━━━━
+📊 GRAPH
+/plot sin(x)
+
+📐 LATEX
+/latex diff(x^2,x)
+
+🐍 PYTHON
+/py 2**10
+
+━━━━━━━━━━━━━━━━━━━━━━
+📂 MEMORY
+x=10
+x+5
+
+━━━━━━━━━━━━━━━━━━━━━━
+🗂 COMMANDS
+/deg /rad
+/plot /latex /py
+/history /vars
+/clear /clearvars /clearfuncs
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 Enjoy!
+""")
 
 @bot.message_handler(commands=['deg'])
 def deg(msg):
@@ -119,22 +180,21 @@ def rad(msg):
 @bot.message_handler(commands=['history'])
 def history(msg):
     hist = user_history.get(msg.chat.id, [])
-    if not hist:
-        bot.reply_to(msg, "No history")
-    else:
-        bot.reply_to(msg, "\n".join(hist[-10:]))
+    bot.reply_to(msg, "\n".join(hist[-10:]) if hist else "No history")
 
 @bot.message_handler(commands=['clear'])
 def clear(msg):
     user_history[msg.chat.id] = []
     bot.reply_to(msg, "🧹 Cleared")
 
-# ================== PLOT ==================
+# ================= PLOT =================
 @bot.message_handler(commands=['plot'])
 def plot_cmd(msg):
     try:
         expr = msg.text.replace("/plot", "").strip()
-        expr = normalize_input(expr).replace("^", "**")
+        expr = normalize_input(expr)
+        expr = fix_functions(expr)
+        expr = expr.replace("^", "**")
 
         x = sp.symbols('x')
         f = sp.lambdify(x, sp.sympify(expr), "numpy")
@@ -154,7 +214,7 @@ def plot_cmd(msg):
     except:
         bot.reply_to(msg, "❌ Plot error")
 
-# ================== MAIN HANDLER ==================
+# ================= MAIN =================
 @bot.message_handler(func=lambda m: True)
 def calc(msg):
     user_id = msg.chat.id
@@ -170,8 +230,7 @@ def calc(msg):
 
     bot.reply_to(msg, response)
 
-
-# ================== WEBHOOK ==================
+# ================= WEBHOOK =================
 @app.post("/webhook")
 async def webhook(req: Request):
     data = await req.json()
