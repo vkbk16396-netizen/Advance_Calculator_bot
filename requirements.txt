@@ -1,6 +1,9 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pyTelegramBotAPI
 sympy
 numpy
 matplotlib
+pytesseract
+pillow
+openai
