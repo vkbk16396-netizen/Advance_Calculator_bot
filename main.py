@@ -1,3 +1,4 @@
+# ================= IMPORTS =================
 import os
 import re
 import asyncio
@@ -42,7 +43,7 @@ def preprocess(expr):
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
     return expr.replace("^","**")
 
-# ================= SAFE =================
+# ================= SAFE LOCALS =================
 def safe_locals(chat_id):
     x = sp.symbols('x')
     return {
@@ -59,7 +60,7 @@ def safe_locals(chat_id):
         **chat_variables.get(chat_id, {})
     }
 
-# ================= EVALUATE (FIXED POSITION) =================
+# ================= EVALUATE =================
 def evaluate(expr, chat_id):
     expr = preprocess(expr)
     if not expr:
@@ -79,7 +80,7 @@ def evaluate(expr, chat_id):
     except:
         return None
 
-# ================= SAVE =================
+# ================= SAVE HISTORY =================
 def save_history(chat_id, expr, result):
     cursor.execute("INSERT INTO history VALUES (?, ?, ?)", (chat_id, expr, str(result)))
     conn.commit()
@@ -104,7 +105,7 @@ def solve_image(path):
     except:
         return None
 
-# ================= URL =================
+# ================= URL SHORTENER =================
 def shorten_url(url):
     try:
         return requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
@@ -145,6 +146,26 @@ def unit_convert(text):
     except:
         return None
 
+# ================= PLOT =================
+def plot(expr):
+    x = sp.symbols('x')
+    funcs = expr.split(",")
+    xs = np.linspace(-10,10,400)
+
+    plt.figure()
+    for f in funcs:
+        try:
+            f_np = sp.lambdify(x, sp.sympify(preprocess(f)), 'numpy')
+            plt.plot(xs, f_np(xs))
+        except:
+            continue
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+    return buf
+
 # ================= BUTTONS =================
 def buttons():
     m = InlineKeyboardMarkup()
@@ -166,6 +187,7 @@ def buttons():
 async def webhook(request: Request):
     data = await request.json()
 
+    # BUTTON HANDLER
     if "callback_query" in data:
         call = data["callback_query"]
         chat_id = call["message"]["chat"]["id"]
@@ -192,7 +214,7 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # IMAGE SAFE
+    # IMAGE OCR SAFE
     if "photo" in msg:
         file = bot.get_file(msg["photo"][-1]["file_id"])
         data_file = bot.download_file(file.file_path)
