@@ -59,6 +59,26 @@ def safe_locals(chat_id):
         **chat_variables.get(chat_id, {})
     }
 
+# ================= EVALUATE (FIXED POSITION) =================
+def evaluate(expr, chat_id):
+    expr = preprocess(expr)
+    if not expr:
+        return None
+
+    if expr.startswith("matrix"):
+        try:
+            return sp.Matrix(eval(expr[6:], {"__builtins__":{}}))
+        except:
+            return None
+
+    safe = safe_locals(chat_id)
+
+    try:
+        res = sp.sympify(expr, locals=safe)
+        return str(res) if res.free_symbols else float(res.evalf())
+    except:
+        return None
+
 # ================= SAVE =================
 def save_history(chat_id, expr, result):
     cursor.execute("INSERT INTO history VALUES (?, ?, ?)", (chat_id, expr, str(result)))
@@ -84,7 +104,7 @@ def solve_image(path):
     except:
         return None
 
-# ================= URL SHORTENER =================
+# ================= URL =================
 def shorten_url(url):
     try:
         return requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
@@ -125,61 +145,6 @@ def unit_convert(text):
     except:
         return None
 
-# ================= HELP (DESIGNED) =================
-def get_help():
-    return """
-╭━━━━━━━━━━━━━━━━━━━━━━╮
-📘 *ULTIMATE CALCULATOR*
-╰━━━━━━━━━━━━━━━━━━━━━━╯
-
-🧮 BASIC
-`2+2`, `5^2`, `5%`
-
-📐 TRIG
-`sin(30)`, `cos 60`
-
-📊 CALCULUS
-`diff(x^2,x)`
-`integrate(x^2,x)`
-
-📦 MATRIX
-`Matrix([[1,2],[3,4]])`
-`det(Matrix(...))`
-`inv(Matrix(...))`
-
-🧠 SOLVE
-`/solve x^2-4=0`
-
-📈 GRAPH
-`/plot sin(x)`
-`/plot sin(x),cos(x)`
-
-📊 STATS
-`mean(1,2,3)`
-`variance(1,2,3)`
-
-📸 IMAGE
-Send photo → solve (if supported)
-
-🤖 AI
-`/ai explain integration`
-
-🔗 URL
-`/short https://example.com`
-
-💾 EXPORT
-`/export`
-
-🌐 UNIT
-`10 km to m`
-
-📂 VARIABLES
-`x=10`, `x+5`
-
-━━━━━━━━━━━━━━━━━━━━━━
-🚀 Enjoy!
-"""
-
 # ================= BUTTONS =================
 def buttons():
     m = InlineKeyboardMarkup()
@@ -207,7 +172,7 @@ async def webhook(request: Request):
         btn = call["data"]
 
         if btn == "help":
-            await asyncio.to_thread(bot.send_message, chat_id, get_help())
+            await asyncio.to_thread(bot.send_message, chat_id, "/help")
         elif btn == "plot":
             await asyncio.to_thread(bot.send_message, chat_id, "`/plot sin(x)`")
         elif btn == "solve":
@@ -242,6 +207,7 @@ async def webhook(request: Request):
             return {"ok": True}
 
         result = evaluate(extracted, chat_id)
+
         await asyncio.to_thread(bot.send_message, chat_id, f"📸 `{extracted}`")
 
         if result:
@@ -259,7 +225,7 @@ async def webhook(request: Request):
         )
 
     elif lower == "/help":
-        await asyncio.to_thread(bot.send_message, chat_id, get_help())
+        await asyncio.to_thread(bot.send_message, chat_id, "/help")
 
     elif lower.startswith("/short"):
         await asyncio.to_thread(bot.send_message, chat_id, shorten_url(text[6:]))
