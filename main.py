@@ -125,45 +125,60 @@ def unit_convert(text):
     except:
         return None
 
-# ================= EVALUATE =================
-def evaluate(expr, chat_id):
-    expr = preprocess(expr)
-    if not expr:
-        return None
+# ================= HELP (DESIGNED) =================
+def get_help():
+    return """
+╭━━━━━━━━━━━━━━━━━━━━━━╮
+📘 *ULTIMATE CALCULATOR*
+╰━━━━━━━━━━━━━━━━━━━━━━╯
 
-    if expr.startswith("matrix"):
-        try:
-            return sp.Matrix(eval(expr[6:], {"__builtins__":{}}))
-        except:
-            return None
+🧮 BASIC
+`2+2`, `5^2`, `5%`
 
-    safe = safe_locals(chat_id)
+📐 TRIG
+`sin(30)`, `cos 60`
 
-    try:
-        res = sp.sympify(expr, locals=safe)
-        return str(res) if res.free_symbols else float(res.evalf())
-    except:
-        return None
+📊 CALCULUS
+`diff(x^2,x)`
+`integrate(x^2,x)`
 
-# ================= PLOT =================
-def plot(expr):
-    x = sp.symbols('x')
-    funcs = expr.split(",")
-    xs = np.linspace(-10,10,400)
+📦 MATRIX
+`Matrix([[1,2],[3,4]])`
+`det(Matrix(...))`
+`inv(Matrix(...))`
 
-    plt.figure()
-    for f in funcs:
-        try:
-            f_np = sp.lambdify(x, sp.sympify(preprocess(f)), 'numpy')
-            plt.plot(xs, f_np(xs))
-        except:
-            continue
+🧠 SOLVE
+`/solve x^2-4=0`
 
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-    return buf
+📈 GRAPH
+`/plot sin(x)`
+`/plot sin(x),cos(x)`
+
+📊 STATS
+`mean(1,2,3)`
+`variance(1,2,3)`
+
+📸 IMAGE
+Send photo → solve (if supported)
+
+🤖 AI
+`/ai explain integration`
+
+🔗 URL
+`/short https://example.com`
+
+💾 EXPORT
+`/export`
+
+🌐 UNIT
+`10 km to m`
+
+📂 VARIABLES
+`x=10`, `x+5`
+
+━━━━━━━━━━━━━━━━━━━━━━
+🚀 Enjoy!
+"""
 
 # ================= BUTTONS =================
 def buttons():
@@ -192,7 +207,7 @@ async def webhook(request: Request):
         btn = call["data"]
 
         if btn == "help":
-            await asyncio.to_thread(bot.send_message, chat_id, "/help")
+            await asyncio.to_thread(bot.send_message, chat_id, get_help())
         elif btn == "plot":
             await asyncio.to_thread(bot.send_message, chat_id, "`/plot sin(x)`")
         elif btn == "solve":
@@ -242,6 +257,9 @@ async def webhook(request: Request):
             "👋 Welcome to Most Advanced Calculator 🤖\n\nMade by @Sudhakaran12\n\n👉 Use /help to see all features",
             reply_markup=buttons()
         )
+
+    elif lower == "/help":
+        await asyncio.to_thread(bot.send_message, chat_id, get_help())
 
     elif lower.startswith("/short"):
         await asyncio.to_thread(bot.send_message, chat_id, shorten_url(text[6:]))
