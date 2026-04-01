@@ -8,7 +8,6 @@ from io import BytesIO
 import telebot
 import sqlite3
 import requests
-from PIL import Image
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -77,7 +76,7 @@ def save_history(chat_id, expr, result):
     cursor.execute("INSERT INTO history VALUES (?, ?, ?)", (chat_id, expr, str(result)))
     conn.commit()
 
-# ================= HELP DESIGN =================
+# ================= HELP =================
 def get_help():
     return """
 ✨ *ULTIMATE CALCULATOR PRO* 🤖
@@ -88,7 +87,6 @@ def get_help():
 
 📐 *TRIGONOMETRY*
 `sin(30)`, `cos 60`
-Use `/deg` `/rad`
 
 📊 *CALCULUS*
 `diff(x^2,x)`
@@ -119,10 +117,10 @@ Use `/deg` `/rad`
 `/dbhistory`
 
 ━━━━━━━━━━━━━━━━━━━
-💡 *Try:* `2²`, `cos 60`, `sin(30)`
+💡 Try: `2²`, `cos 60`, `sin(30)`
 """
 
-# ================= BUTTONS =================
+# ================= HELP BUTTONS =================
 def help_buttons():
     m = InlineKeyboardMarkup()
     m.row(
@@ -185,15 +183,24 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # START (UNCHANGED)
+    # START (IMPROVED DESIGN)
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "👋 Welcome to Most Advanced Calculator 🤖\n\nMade by @Sudhakaran12\n\n👉 Use /help to see all features"
+            "✨ *Welcome to the Most Advanced Calculator* 🤖\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🚀 *Fast • Powerful • Intelligent*\n\n"
+            "🧮 Solve complex calculations instantly\n"
+            "📊 Plot graphs & analyze functions\n"
+            "🧠 Perform calculus, algebra & more\n"
+            "📦 Work with matrices & probability\n\n"
+            "👨‍💻 *Developed by:* @Sudhakaran12\n\n"
+            "👉 Use /help to explore all features\n"
+            "💡 Try: `2²`, `cos 60`, `sin(30)`"
         )
 
-    # HELP (PRO DESIGN)
+    # HELP (PRO)
     elif lower == "/help":
         await asyncio.to_thread(
             bot.send_message,
