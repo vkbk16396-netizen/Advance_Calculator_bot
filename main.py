@@ -12,6 +12,7 @@ from PIL import Image
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
 from openai import OpenAI
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 app = FastAPI()
 
@@ -35,7 +36,6 @@ CREATE TABLE IF NOT EXISTS history (
 """)
 conn.commit()
 
-# ================= STORAGE =================
 chat_variables = {}
 
 # ================= PREPROCESS =================
@@ -47,10 +47,6 @@ def preprocess(expr):
     expr = re.sub(r'(sin|cos|tan)\s+(\d+)', r'\1(\2)', expr)
     expr = expr.replace("×", "*").replace("÷", "/")
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
-
-    superscripts = {"²": "^2", "³": "^3"}
-    for k, v in superscripts.items():
-        expr = expr.replace(k, v)
 
     return expr.replace("^", "**")
 
@@ -73,10 +69,7 @@ def safe_locals(chat_id):
 
 # ================= SAVE HISTORY =================
 def save_history(chat_id, expr, result):
-    cursor.execute(
-        "INSERT INTO history VALUES (?, ?, ?)",
-        (chat_id, expr, str(result))
-    )
+    cursor.execute("INSERT INTO history VALUES (?, ?, ?)", (chat_id, expr, str(result)))
     conn.commit()
 
 # ================= AI =================
@@ -90,14 +83,13 @@ def ai_chat(prompt):
             ]
         )
         return res.choices[0].message.content
-    except Exception as e:
-        return f"❌ AI Error: {e}"
+    except:
+        return "❌ AI Error"
 
 # ================= OCR =================
 def solve_image(path):
     img = Image.open(path)
-    text = pytesseract.image_to_string(img)
-    return text
+    return pytesseract.image_to_string(img)
 
 # ================= EVALUATE =================
 def evaluate(expr, chat_id):
@@ -105,7 +97,6 @@ def evaluate(expr, chat_id):
     if not expr:
         return None
 
-    # MATRIX FIX
     if expr.startswith("matrix"):
         try:
             data = eval(expr[6:], {"__builtins__": {}})
@@ -115,7 +106,6 @@ def evaluate(expr, chat_id):
 
     safe = safe_locals(chat_id)
 
-    # VARIABLE
     if "=" in expr and expr.count("=") == 1:
         left, right = expr.split("=")
         if left.strip().isidentifier():
@@ -133,8 +123,7 @@ def evaluate(expr, chat_id):
 def solve_eq(expr):
     try:
         x = sp.symbols('x')
-        expr = preprocess(expr)
-        eq = sp.sympify(expr.replace("=", "-(") + ")")
+        eq = sp.sympify(preprocess(expr).replace("=", "-(") + ")")
         return sp.solve(eq, x)
     except:
         return None
@@ -148,12 +137,10 @@ def plot(expr):
     plt.figure()
 
     valid = False
-
     for f in funcs:
         f = f.strip()
         if not f:
             continue
-
         try:
             f_sym = sp.sympify(preprocess(f))
             f_np = sp.lambdify(x, f_sym, 'numpy')
@@ -177,35 +164,66 @@ def plot(expr):
 # ================= HELP =================
 def get_help():
     return """
-📘 ULTIMATE CALCULATOR HELP
+📘 ULTIMATE CALCULATOR GUIDE
 
-🧮 BASIC
-2+2, 5^2, 10/3
-
-📐 TRIG
-sin(30), cos 60
-
-📊 CALCULUS
-diff(x^2,x)
-integrate(x^2,x)
-
-📦 MATRIX
-Matrix([[1,2],[3,4]])
-
-📈 GRAPH
-/plot sin(x)
-
-🐍 PYTHON
-/py 2**10
-
-📂 MEMORY
-x=10, x+5
+🧮 Basic → 2+2, 5%
+📐 Trig → sin(30)
+📊 Calc → diff(x^2,x)
+📦 Matrix → Matrix([[1,2],[3,4]])
+🧠 Solve → /solve x^2-4=0
+📈 Plot → /plot sin(x),cos(x)
+🤖 AI → /ai explain
+📸 Image → send photo
+💾 DB → /dbhistory
 """
+
+# ================= BUTTONS =================
+def main_buttons():
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("📘 Help", callback_data="help"),
+        InlineKeyboardButton("📊 Features", callback_data="features")
+    )
+    markup.row(
+        InlineKeyboardButton("📈 Plot", callback_data="plot"),
+        InlineKeyboardButton("🧠 Solve", callback_data="solve")
+    )
+    markup.row(
+        InlineKeyboardButton("🤖 AI", callback_data="ai"),
+        InlineKeyboardButton("💾 History", callback_data="history")
+    )
+    return markup
 
 # ================= WEBHOOK =================
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
+
+    # BUTTON HANDLER
+    if "callback_query" in data:
+        call = data["callback_query"]
+        chat_id = call["message"]["chat"]["id"]
+        btn = call["data"]
+
+        if btn == "help":
+            await asyncio.to_thread(bot.send_message, chat_id, get_help())
+
+        elif btn == "features":
+            await asyncio.to_thread(bot.send_message, chat_id, "🔥 All features enabled!")
+
+        elif btn == "plot":
+            await asyncio.to_thread(bot.send_message, chat_id, "`/plot sin(x),cos(x)`")
+
+        elif btn == "solve":
+            await asyncio.to_thread(bot.send_message, chat_id, "`/solve x^2-4=0`")
+
+        elif btn == "ai":
+            await asyncio.to_thread(bot.send_message, chat_id, "`/ai explain integration`")
+
+        elif btn == "history":
+            await asyncio.to_thread(bot.send_message, chat_id, "`/dbhistory`")
+
+        return {"ok": True}
 
     if "message" not in data:
         return {"ok": True}
@@ -215,7 +233,7 @@ async def webhook(request: Request):
     text = msg.get("text", "").strip()
     lower = text.lower()
 
-    # ===== IMAGE OCR =====
+    # IMAGE OCR
     if "photo" in msg:
         file_id = msg["photo"][-1]["file_id"]
         file = bot.get_file(file_id)
@@ -227,26 +245,23 @@ async def webhook(request: Request):
         extracted = solve_image("img.png")
         result = evaluate(extracted, chat_id)
 
-        await asyncio.to_thread(bot.send_message, chat_id, f"📸 Detected:\n`{extracted}`")
+        await asyncio.to_thread(bot.send_message, chat_id, f"📸 `{extracted}`")
 
         if result:
             await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
-        else:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ Could not solve")
 
         return {"ok": True}
 
-    # ===== START (UNCHANGED) =====
+    # START WITH BUTTONS
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "👋 Welcome to Most Advanced Calculator 🤖\n\n"
-            "Made by @Sudhakaran12\n\n"
-            "👉 Use /help to see all features"
+            "🤖 *Most Advanced Calculator*\n\n"
+            "👉 Use buttons below or /help",
+            reply_markup=main_buttons()
         )
 
-    # ===== HELP (UNCHANGED) =====
     elif lower == "/help":
         await asyncio.to_thread(bot.send_message, chat_id, get_help())
 
@@ -258,30 +273,22 @@ async def webhook(request: Request):
         buf = plot(text[5:].strip())
         if buf:
             await asyncio.to_thread(bot.send_photo, chat_id, buf)
-        else:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ Invalid plot input")
 
     elif lower.startswith("/ai"):
-        prompt = text[3:].strip()
-        reply = ai_chat(prompt)
+        reply = ai_chat(text[3:].strip())
         await asyncio.to_thread(bot.send_message, chat_id, reply)
 
     elif lower == "/dbhistory":
         cursor.execute("SELECT expr, result FROM history WHERE chat_id=?", (chat_id,))
         rows = cursor.fetchall()
-
-        if not rows:
-            await asyncio.to_thread(bot.send_message, chat_id, "No history")
-        else:
-            txt = "\n".join([f"{e} = {r}" for e, r in rows[-10:]])
-            await asyncio.to_thread(bot.send_message, chat_id, txt)
+        txt = "\n".join([f"{e} = {r}" for e, r in rows[-10:]]) if rows else "No history"
+        await asyncio.to_thread(bot.send_message, chat_id, txt)
 
     else:
         result = evaluate(text, chat_id)
-
         if result is not None:
             save_history(chat_id, text, result)
-            await asyncio.to_thread(bot.send_message, chat_id, f"✅\n`{result}`")
+            await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
         else:
             await asyncio.to_thread(bot.send_message, chat_id, "❌ Invalid input")
 
