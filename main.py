@@ -11,8 +11,8 @@ import requests
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
 
-# ✅ GEMINI IMPORT
-import google.generativeai as genai
+# ✅ NEW GEMINI SDK
+from google import genai
 
 app = FastAPI()
 
@@ -20,10 +20,9 @@ app = FastAPI()
 TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 
-# ================= GEMINI SETUP =================
+# ================= GEMINI =================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ================= DATABASE =================
 conn = sqlite3.connect("history.db", check_same_thread=False)
@@ -119,11 +118,13 @@ def evaluate(expr, chat_id):
 # ================= GEMINI FUNCTION =================
 def gemini_reply(text):
     try:
-        response = model.generate_content(
-            f"You are a smart AI assistant inside a calculator bot.\n\n{text}"
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=f"You are a smart AI inside a calculator bot.\n\n{text}"
         )
         return response.text
-    except:
+    except Exception as e:
+        print("Gemini error:", e)
         return "⚠️ Gemini error"
 
 # ================= SAVE =================
