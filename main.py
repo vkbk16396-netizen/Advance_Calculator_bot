@@ -10,9 +10,7 @@ import sqlite3
 import requests
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
-
-# ✅ NEW GEMINI SDK
-from google import genai
+from google import genai   # ✅ NEW SDK
 
 app = FastAPI()
 
@@ -115,17 +113,22 @@ def evaluate(expr, chat_id):
     except:
         return None
 
-# ================= GEMINI FUNCTION =================
+# ================= GEMINI =================
 def gemini_reply(text):
     try:
+        if not GEMINI_API_KEY:
+            return "⚠️ API key not set"
+
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=f"You are a smart AI inside a calculator bot.\n\n{text}"
+            model="gemini-2.0-flash",  # ✅ FIXED
+            contents=text
         )
-        return response.text
+
+        return response.text.strip()
+
     except Exception as e:
-        print("Gemini error:", e)
-        return "⚠️ Gemini error"
+        print("GEMINI ERROR:", e)
+        return f"⚠️ Gemini error\n{str(e)[:100]}"
 
 # ================= SAVE =================
 def save_history(chat_id, expr, result):
