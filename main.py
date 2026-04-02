@@ -16,7 +16,9 @@ app = FastAPI()
 
 # ================= TOKEN =================
 TOKEN = os.getenv("BOT_TOKEN")
-bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
+
+# 🔥 FIX: removed Markdown crash
+bot = telebot.TeleBot(TOKEN, parse_mode=None)
 
 # ================= GEMINI =================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -197,34 +199,34 @@ async def webhook(request: Request):
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
             "🧮 *BASIC*\n"
-            "`2+2`, `5*6`, `10/3`, `5%`\n\n"
+            "2+2, 5*6, 10/3, 5%\n\n"
 
             "📐 *TRIG*\n"
-            "`sin(30)`, `cos 60`, `tan(45)`\n\n"
+            "sin(30), cos 60, tan(45)\n\n"
 
             "📊 *CALCULUS*\n"
-            "`diff(x^2,x)`\n"
-            "`integrate(x^2,x)`\n\n"
+            "diff(x^2,x)\n"
+            "integrate(x^2,x)\n\n"
 
             "📦 *MATRIX*\n"
-            "`Matrix([[1,2],[3,4]])`\n\n"
+            "Matrix([[1,2],[3,4]])\n\n"
 
             "🧠 *SOLVE*\n"
-            "`/solve x^2-4=0`\n\n"
+            "/solve x^2-4=0\n\n"
 
             "📈 *PLOT*\n"
-            "`/plot sin(x),cos(x)`\n\n"
+            "/plot sin(x),cos(x)\n\n"
 
             "🔗 *SHORT URL*\n"
-            "`/short https://example.com`\n\n"
+            "/short https://example.com\n\n"
 
             "📤 *EXPORT*\n"
-            "`/export`\n\n"
+            "/export\n\n"
 
             "🔄 *CONVERT*\n"
-            "`10 km to m`\n\n"
+            "10 km to m\n\n"
 
-            "💡 *Supports:* ² ⁶ ¾ ⅚ etc."
+            "💡 Supports: ² ⁶ ¾ ⅚ etc."
         )
 
     elif lower.startswith("/short"):
@@ -237,7 +239,7 @@ async def webhook(request: Request):
 
     elif lower.startswith("/solve"):
         res = sp.solve(sp.sympify(text[6:].replace("=","-(")+")"))
-        await asyncio.to_thread(bot.send_message, chat_id, f"🧠 `{res}`")
+        await asyncio.to_thread(bot.send_message, chat_id, f"🧠 {res}")
 
     elif lower == "/export":
         cursor.execute("SELECT expr,result FROM history WHERE chat_id=?", (chat_id,))
@@ -274,7 +276,7 @@ async def webhook(request: Request):
 
         if result is not None:
             save_history(chat_id, text, result)
-            await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
+            await asyncio.to_thread(bot.send_message, chat_id, f"✅ {result}")
         else:
             reply = gemini_reply(text)
             await asyncio.to_thread(bot.send_message, chat_id, reply)
