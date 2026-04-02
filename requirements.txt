@@ -6,4 +6,4 @@ sympy
 numpy
 matplotlib
 requests
-google-generativeai
+from google import genai
