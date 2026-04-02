@@ -10,7 +10,7 @@ import sqlite3
 import requests
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
-from google import genai   # ✅ NEW SDK
+from google import genai
 
 app = FastAPI()
 
@@ -20,7 +20,7 @@ bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 
 # ================= GEMINI =================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ================= DATABASE =================
 conn = sqlite3.connect("history.db", check_same_thread=False)
@@ -116,13 +116,16 @@ def evaluate(expr, chat_id):
 # ================= GEMINI =================
 def gemini_reply(text):
     try:
-        if not GEMINI_API_KEY:
-            return "⚠️ API key not set"
+        if not client:
+            return "⚠️ Gemini API key not configured"
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",  # ✅ FIXED
+            model="gemini-2.0-flash",
             contents=text
         )
+
+        if not response or not response.text:
+            return "⚠️ Empty Gemini response"
 
         return response.text.strip()
 
