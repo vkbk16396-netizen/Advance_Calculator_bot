@@ -1,9 +1,9 @@
 fastapi
 uvicorn
+gunicorn
 pyTelegramBotAPI
 sympy
 numpy
 matplotlib
-pytesseract
-pillow
-openai
+requests
+google-generativeai
