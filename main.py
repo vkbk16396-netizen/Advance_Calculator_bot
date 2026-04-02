@@ -31,10 +31,8 @@ def preprocess(expr):
     if not expr:
         return ""
 
-    # trig fix
     expr = re.sub(r'(sin|cos|tan)\s+(\d+)', r'\1(\2)', expr)
 
-    # superscripts → power
     superscripts = {
         "⁰":"0","¹":"1","²":"2","³":"3","⁴":"4",
         "⁵":"5","⁶":"6","⁷":"7","⁸":"8","⁹":"9"
@@ -55,7 +53,6 @@ def preprocess(expr):
 
     expr = new_expr
 
-    # FULL fraction support
     fractions = {
         "½":"1/2","¼":"1/4","¾":"3/4",
         "⅓":"1/3","⅔":"2/3",
@@ -67,13 +64,9 @@ def preprocess(expr):
     for k,v in fractions.items():
         expr = expr.replace(k, v)
 
-    # mixed numbers (5¾ → 5+3/4)
     expr = re.sub(r'(\d+)\s*(\d+/\d+)', r'(\1+\2)', expr)
-
-    # percent
     expr = re.sub(r'(\d+(\.\d+)?)\s*%', r'(\1/100)', expr)
 
-    # symbols
     expr = expr.replace("×","*").replace("÷","/")
 
     return expr
@@ -153,17 +146,61 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # ===== START (UNCHANGED) =====
+    # ===== START =====
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
             chat_id,
-            "👋 Welcome to Most Advanced Calculator 🤖\n\nMade by @Sudhakaran12\n\n👉 Use /help to see all features"
+            "✨ *Welcome to Most Advanced Calculator* 🤖\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🚀 *Fast • Powerful • Intelligent*\n\n"
+            "🧮 Solve any calculation instantly\n"
+            "📊 Plot graphs & analyze functions\n"
+            "📐 Perform calculus & algebra\n"
+            "📦 Work with matrices & statistics\n\n"
+            "👨‍💻 *Developed by:* @Sudhakaran12\n\n"
+            "👉 Use /help to explore all features\n"
+            "💡 *Try:* `2²`, `cos 60`, `sin(30)`"
         )
 
-    # ===== HELP (UNCHANGED) =====
+    # ===== HELP (FIXED) =====
     elif lower == "/help":
-        await asyncio.to_thread(bot.send_message, chat_id, "/help")
+        await asyncio.to_thread(
+            bot.send_message,
+            chat_id,
+            "📘 *ULTIMATE CALCULATOR GUIDE*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            "🧮 *BASIC*\n"
+            "`2+2`, `5*6`, `10/3`, `5%`\n\n"
+
+            "📐 *TRIG*\n"
+            "`sin(30)`, `cos 60`, `tan(45)`\n\n"
+
+            "📊 *CALCULUS*\n"
+            "`diff(x^2,x)`\n"
+            "`integrate(x^2,x)`\n\n"
+
+            "📦 *MATRIX*\n"
+            "`Matrix([[1,2],[3,4]])`\n\n"
+
+            "🧠 *SOLVE*\n"
+            "`/solve x^2-4=0`\n\n"
+
+            "📈 *PLOT*\n"
+            "`/plot sin(x),cos(x)`\n\n"
+
+            "🔗 *SHORT URL*\n"
+            "`/short https://example.com`\n\n"
+
+            "📤 *EXPORT*\n"
+            "`/export`\n\n"
+
+            "🔄 *CONVERT*\n"
+            "`10 km to m`\n\n"
+
+            "💡 *Supports:* ² ⁶ ¾ ⅚ etc."
+        )
 
     # ===== SHORT URL =====
     elif lower.startswith("/short"):
@@ -195,7 +232,7 @@ async def webhook(request: Request):
             with open(file,"rb") as f:
                 await asyncio.to_thread(bot.send_document, chat_id, f)
 
-    # ===== UNIT CONVERTER =====
+    # ===== UNIT =====
     elif " to " in lower:
         try:
             v,u1,_,u2 = lower.split()
