@@ -11,11 +11,19 @@ import requests
 from fastapi import FastAPI, Request
 from sympy.stats import Normal, density
 
+# ✅ GEMINI IMPORT
+import google.generativeai as genai
+
 app = FastAPI()
 
 # ================= TOKEN =================
 TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
+
+# ================= GEMINI SETUP =================
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-pro")
 
 # ================= DATABASE =================
 conn = sqlite3.connect("history.db", check_same_thread=False)
@@ -108,6 +116,16 @@ def evaluate(expr, chat_id):
     except:
         return None
 
+# ================= GEMINI FUNCTION =================
+def gemini_reply(text):
+    try:
+        response = model.generate_content(
+            f"You are a smart AI assistant inside a calculator bot.\n\n{text}"
+        )
+        return response.text
+    except:
+        return "⚠️ Gemini error"
+
 # ================= SAVE =================
 def save_history(chat_id, expr, result):
     cursor.execute("INSERT INTO history VALUES (?, ?, ?)", (chat_id, expr, str(result)))
@@ -146,7 +164,7 @@ async def webhook(request: Request):
     text = msg.get("text","").strip()
     lower = text.lower()
 
-    # ===== START =====
+    # ===== START (UNCHANGED) =====
     if lower == "/start":
         await asyncio.to_thread(
             bot.send_message,
@@ -163,7 +181,7 @@ async def webhook(request: Request):
             "💡 *Try:* `2²`, `cos 60`, `sin(30)`"
         )
 
-    # ===== HELP (FIXED) =====
+    # ===== HELP (UNCHANGED) =====
     elif lower == "/help":
         await asyncio.to_thread(
             bot.send_message,
@@ -202,22 +220,18 @@ async def webhook(request: Request):
             "💡 *Supports:* ² ⁶ ¾ ⅚ etc."
         )
 
-    # ===== SHORT URL =====
     elif lower.startswith("/short"):
         url = text[6:]
         res = requests.get(f"http://tinyurl.com/api-create.php?url={url}").text
         await asyncio.to_thread(bot.send_message, chat_id, res)
 
-    # ===== PLOT =====
     elif lower.startswith("/plot"):
         await asyncio.to_thread(bot.send_photo, chat_id, plot(text[5:]))
 
-    # ===== SOLVE =====
     elif lower.startswith("/solve"):
         res = sp.solve(sp.sympify(text[6:].replace("=","-(")+")"))
         await asyncio.to_thread(bot.send_message, chat_id, f"🧠 `{res}`")
 
-    # ===== EXPORT =====
     elif lower == "/export":
         cursor.execute("SELECT expr,result FROM history WHERE chat_id=?", (chat_id,))
         rows = cursor.fetchall()
@@ -232,7 +246,6 @@ async def webhook(request: Request):
             with open(file,"rb") as f:
                 await asyncio.to_thread(bot.send_document, chat_id, f)
 
-    # ===== UNIT =====
     elif " to " in lower:
         try:
             v,u1,_,u2 = lower.split()
@@ -248,13 +261,15 @@ async def webhook(request: Request):
         except:
             pass
 
-    # ===== CALCULATE =====
+    # ===== CALCULATE + GEMINI =====
     else:
         result = evaluate(text, chat_id)
+
         if result is not None:
             save_history(chat_id, text, result)
             await asyncio.to_thread(bot.send_message, chat_id, f"✅ `{result}`")
         else:
-            await asyncio.to_thread(bot.send_message, chat_id, "❌ Invalid input")
+            reply = gemini_reply(text)
+            await asyncio.to_thread(bot.send_message, chat_id, reply)
 
     return {"ok": True}
