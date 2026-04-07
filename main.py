@@ -4,11 +4,11 @@ import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import sympy as sp
-import google.generativeai as genai
+from google import genai
 
 # ===== CONFIG =====
-BOT_TOKEN = "8719916019:AAGBPiuORWMpsotcwA_OwKji_w494dWRUPo"
-GENAI_API_KEY = "AIzaSyDl4YaCIulXWEx0Ey5A7fpmhJWEY3yP2Ww"
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+GENAI_API_KEY = "YOUR_GEMINI_API_KEY"
 AI_COOLDOWN_SECONDS = 8
 
 # ===== LOGGING =====
@@ -19,8 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===== GEMINI SETUP =====
-genai.configure(api_key=GENAI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+client = genai.Client(api_key=GENAI_API_KEY)
 
 last_used: dict[int, float] = {}
 
@@ -38,22 +37,22 @@ def ask_gemini(user_input: str, user_id: int) -> str:
         remaining = int(AI_COOLDOWN_SECONDS - (time.time() - last_used[user_id])) + 1
         return f"⏳ Please wait {remaining}s before using AI again."
     try:
-        response = model.generate_content(user_input)
-        if response and hasattr(response, "text"):
-            return response.text.strip()
-        return "⚠️ No response from AI."
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=user_input
+        )
+        return response.text.strip() if response.text else "⚠️ No response from AI."
     except Exception as e:
-        err = str(e)
-        logger.warning("Gemini error: %s", err)
-        if "429" in err or "quota" in err.lower():
+        logger.warning("Gemini error: %s", e)
+        if "429" in str(e) or "quota" in str(e).lower():
             return "⚠️ AI quota reached. Please try again later."
         return "❌ AI error. Please try again later."
 
 
+# ===== AI TRIGGER KEYWORDS =====
 AI_KEYWORDS = {"explain", "what", "who", "how", "write", "why", "when", "describe", "tell"}
 
 def should_use_ai(text: str) -> bool:
-    """Return True if the message looks like a natural language query."""
     normalized = text.lower().strip()
     if normalized.replace(" ", "").isdigit():
         return False
@@ -64,11 +63,9 @@ def should_use_ai(text: str) -> bool:
 x = sp.symbols("x")
 
 def solve_math(expr: str) -> str | None:
-    """Attempt to evaluate a symbolic math expression. Returns None on failure."""
     try:
         sanitized = expr.replace("^", "**")
         result = sp.sympify(sanitized)
-        # Avoid returning unevaluated symbols as a "result"
         if result.free_symbols:
             return str(sp.simplify(result))
         return str(result)
@@ -107,7 +104,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user_input:
         return
 
-    # 1. Try symbolic math
+    # 1. Try symbolic math first
     math_result = solve_math(user_input)
     if math_result is not None:
         await update.message.reply_text(f"✅ {math_result}")
