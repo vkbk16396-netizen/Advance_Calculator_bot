@@ -1,4 +1,4 @@
-Import os
+import os
 import re
 import math
 import asyncio
@@ -517,3 +517,4 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "Bot is running"}
+    
