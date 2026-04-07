@@ -3,6 +3,7 @@ import re
 import math
 import asyncio
 import sqlite3
+import concurrent.futures
 from io import BytesIO
 
 import numpy as np
@@ -11,7 +12,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import requests
 import telebot
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from sympy.stats import Normal, density
 from google import genai
 
@@ -54,10 +55,7 @@ def preprocess(expr: str) -> str:
         return ""
     expr = expr.lower()
     
-    # common math symbols
     expr = expr.replace("×", "*").replace("÷", "/").replace("^", "**")
-    
-    # allow sin 30 / cos 60 / tan 45
     expr = re.sub(r"\b(sin|cos|tan)\s+(-?\d+(\.\d+)?)\b", r"\1(\2)", expr)
     
     superscripts = {
@@ -87,19 +85,15 @@ def preprocess(expr: str) -> str:
     for k, v in fractions.items():
         expr = expr.replace(k, v)
         
-    # mixed fraction like 1 1/2 -> (1+1/2)
     expr = re.sub(r"(\d+)\s+(\d+/\d+)", r"(\1+\2)", expr)
-    
-    # percent
     expr = re.sub(r"(\d+(\.\d+)?)\s*%", r"(\1/100)", expr)
     
     return expr
 
-# ================= SAFE =================
+# ================= SAFE LOCALS =================
 def safe_locals(chat_id: int) -> dict:
     x = sp.symbols("x")
     
-    # degree-based trig for user-friendly calculator input
     def sin_deg(v): return sp.sin(sp.pi * v / 180)
     def cos_deg(v): return sp.cos(sp.pi * v / 180)
     def tan_deg(v): return sp.tan(sp.pi * v / 180)
@@ -121,6 +115,11 @@ def safe_locals(chat_id: int) -> dict:
         "factorial": sp.factorial,
         "diff": sp.diff,
         "integrate": sp.integrate,
+        "limit": sp.limit,
+        "series": sp.series,
+        "bin": lambda val: bin(int(val)),
+        "hex": lambda val: hex(int(val)),
+        "oct": lambda val: oct(int(val)),
         "Matrix": sp.Matrix,
         "det": lambda m: sp.Matrix(m).det(),
         "inv": lambda m: sp.Matrix(m).inv(),
@@ -133,39 +132,43 @@ def safe_locals(chat_id: int) -> dict:
         **chat_variables.get(chat_id, {}),
     }
 
+# ================= TIMEOUT EXECUTOR =================
+def run_with_timeout(func, *args, timeout=3.0):
+    """Prevents malicious/complex math from hanging the server."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            return "TIMEOUT"
+        except Exception:
+            return None
+
 # ================= EVALUATE =================
+def _eval_math(expr: str, chat_id: int):
+    safe = safe_locals(chat_id)
+    if expr.startswith("matrix"):
+        inside = expr[len("matrix"):].strip()
+        if not inside.startswith("(") or not inside.endswith(")"):
+            return None
+        matrix_data = sp.sympify(inside[1:-1], locals=safe)
+        return str(sp.Matrix(matrix_data))
+        
+    res = sp.sympify(expr, locals=safe)
+    try:
+        res = sp.simplify(res)
+    except Exception:
+        pass
+        
+    if getattr(res, "free_symbols", None) or isinstance(res, str):
+        return str(res)
+    return float(res.evalf())
+
 def evaluate(expr: str, chat_id: int):
     expr = preprocess(expr)
     if not expr:
         return None
-    
-    safe = safe_locals(chat_id)
-    
-    # Matrix(...)
-    if expr.startswith("matrix"):
-        try:
-            inside = expr[len("matrix"):].strip()
-            if not inside.startswith("(") or not inside.endswith(")"):
-                return None
-            matrix_data = sp.sympify(inside[1:-1], locals=safe)
-            return str(sp.Matrix(matrix_data))
-        except Exception:
-            return None
-            
-    try:
-        res = sp.sympify(expr, locals=safe)
-        
-        # simplify exact trig etc.
-        try:
-            res = sp.simplify(res)
-        except Exception:
-            pass
-            
-        if getattr(res, "free_symbols", None):
-            return str(res)
-        return float(res.evalf())
-    except Exception:
-        return None
+    return run_with_timeout(_eval_math, expr, chat_id)
 
 # ================= GEMINI =================
 def gemini_reply(text: str) -> str:
@@ -180,10 +183,9 @@ def gemini_reply(text: str) -> str:
             return "⚠️ Empty Gemini response"
         return response.text.strip()
     except Exception as e:
-        print("GEMINI ERROR:", e)
         return f"⚠️ Gemini error\n{str(e)[:100]}"
 
-# ================= SAVE =================
+# ================= DATABASE OPS =================
 async def save_history(chat_id: int, expr: str, result):
     async with db_lock:
         await asyncio.to_thread(
@@ -192,6 +194,15 @@ async def save_history(chat_id: int, expr: str, result):
             (chat_id, expr, str(result))
         )
         await asyncio.to_thread(conn.commit)
+
+async def clear_history(chat_id: int):
+    async with db_lock:
+        await asyncio.to_thread(cursor.execute, "DELETE FROM history WHERE chat_id=?", (chat_id,))
+        await asyncio.to_thread(conn.commit)
+
+def get_history(chat_id: int):
+    cursor.execute("SELECT expr, result FROM history WHERE chat_id=?", (chat_id,))
+    return cursor.fetchall()
 
 # ================= PLOT =================
 def plot(expr: str):
@@ -220,11 +231,11 @@ def plot(expr: str):
         plt.close()
         return None
         
-    plt.axhline(0)
-    plt.axvline(0)
+    plt.axhline(0, color='black', linewidth=0.5)
+    plt.axvline(0, color='black', linewidth=0.5)
     plt.xlim(-10, 10)
     plt.ylim(-10, 10)
-    plt.grid(True)
+    plt.grid(color='gray', linestyle='--', linewidth=0.5)
     plt.legend()
     
     buf = BytesIO()
@@ -246,210 +257,76 @@ def convert_units(text: str):
     except Exception:
         return None
         
-    conv = {
-        ("km", "m"): 1000,
-        ("m", "km"): 0.001,
-        ("kg", "g"): 1000,
-        ("g", "kg"): 0.001,
-        ("cm", "m"): 0.01,
-        ("m", "cm"): 100,
-        ("mm", "m"): 0.001,
-        ("m", "mm"): 1000,
+    conv_multipliers = {
+        ("km", "m"): 1000, ("m", "km"): 0.001,
+        ("kg", "g"): 1000, ("g", "kg"): 0.001,
+        ("cm", "m"): 0.01, ("m", "cm"): 100,
+        ("mm", "m"): 0.001, ("m", "mm"): 1000,
+        ("km/h", "mph"): 0.621371, ("mph", "km/h"): 1.60934
     }
     
-    factor = conv.get((unit1, unit2))
-    if factor is None:
-        return None
-    return value * factor
+    # Check standard multipliers
+    if (unit1, unit2) in conv_multipliers:
+        return value * conv_multipliers[(unit1, unit2)]
+        
+    # Check temperature
+    if unit1 == "c" and unit2 == "f":
+        return (value * 9/5) + 32
+    if unit1 == "f" and unit2 == "c":
+        return (value - 32) * 5/9
+        
+    return None
 
-def solve_equation(raw_expr: str, chat_id: int):
+def _solve_eq(raw_expr: str, chat_id: int):
     eq = preprocess(raw_expr)
     safe = safe_locals(chat_id)
     x = safe["x"]
-    
-    if not eq:
-        return None
-        
     if "=" in eq:
         left, right = eq.split("=", 1)
         expr = sp.sympify(left, locals=safe) - sp.sympify(right, locals=safe)
     else:
         expr = sp.sympify(eq, locals=safe)
-        
     return sp.solve(expr, x)
+
+def solve_equation(raw_expr: str, chat_id: int):
+    return run_with_timeout(_solve_eq, raw_expr, chat_id)
 
 def shorten_url(url: str) -> str:
     url = url.strip()
     if not url:
         return "❌ Please provide a URL"
     try:
-        response = requests.get(
-            "http://tinyurl.com/api-create.php",
-            params={"url": url},
-            timeout=10
-        )
+        response = requests.get("http://tinyurl.com/api-create.php", params={"url": url}, timeout=5)
         return response.text.strip()
     except Exception as e:
         return f"❌ URL shortener error: {e}"
 
-def get_history(chat_id: int):
-    cursor.execute("SELECT expr, result FROM history WHERE chat_id=?", (chat_id,))
-    return cursor.fetchall()
-
-# ================= WEBHOOK =================
-@app.post("/webhook")
-async def webhook(request: Request):
-    try:
-        data = await request.json()
-    except Exception:
-        return {"ok": False, "error": "Invalid JSON"}
-        
-    if "message" not in data:
-        return {"ok": True}
-        
-    msg = data["message"]
+# ================= BACKGROUND TASK WORKER =================
+async def process_message(msg: dict):
     chat_id = msg["chat"]["id"]
     text = msg.get("text", "").strip()
     lower = text.lower().strip()
     
     if not text:
-        return {"ok": True}
+        return
 
-    # ===== START (UNCHANGED) =====
     if lower == "/start":
         await async_send(
             chat_id,
             "✨ *Welcome to Most Advanced Calculator* 🤖\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "🚀 *Fast • Powerful • Intelligent*\n\n"
-            "🧮 Solve any calculation instantly\n"
+            "🧮 Solve calculations & base conversions (hex, bin)\n"
             "📊 Plot graphs & analyze functions\n"
-            "📐 Perform calculus & algebra\n"
+            "📐 Perform calculus (diff, integrate, limit, series)\n"
             "📦 Work with matrices & statistics\n\n"
             "👨‍💻 *Developed by:* @Sudhakaran12\n\n"
             "👉 Use /help to explore all features\n"
-            "💡 *Try:* `2²`, `cos 60`, `sin(30)`"
+            "💡 *Try:* `2²`, `cos 60`, `limit(sin(x)/x, x, 0)`"
         )
 
-    # ===== HELP (REDESIGNED) =====
     elif lower == "/help":
-        await async_send(
-            chat_id,
-            "📘 MOST ADVANCED CALCULATOR - HELP MENU\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "This bot can do calculations, algebra, calculus, matrices, graphs, unit conversion, URL shortening, history export, and AI replies.\n\n"
-            "🧮 1) BASIC CALCULATIONS\n"
-            "Use normal math expressions.\n"
-            "Examples:\n"
-            "2+2\n"
-            "15-7\n"
-            "8*9\n"
-            "10/4\n"
-            "2^5\n"
-            "2²\n"
-            "3³\n"
-            "50%\n"
-            "1 1/2\n"
-            "¾ + ¼\n\n"
-            "📐 2) TRIGONOMETRY\n"
-            "Use sin, cos, tan.\n"
-            "Examples:\n"
-            "sin(30)\n"
-            "cos(60)\n"
-            "tan(45)\n"
-            "sin 30\n"
-            "cos 90\n\n"
-            "📘 3) ALGEBRA WITH x\n"
-            "Use x in expressions.\n"
-            "Examples:\n"
-            "x+2\n"
-            "x^2+5*x+6\n"
-            "sqrt(x)\n"
-            "log(x)\n\n"
-            "📊 4) CALCULUS\n"
-            "Differentiate and integrate expressions.\n"
-            "Examples:\n"
-            "diff(x^2,x)\n"
-            "diff(sin(x),x)\n"
-            "integrate(x^2,x)\n"
-            "integrate(cos(x),x)\n\n"
-            "🧠 5) EQUATION SOLVER\n"
-            "Use /solve to solve equations.\n"
-            "Examples:\n"
-            "/solve x^2-4=0\n"
-            "/solve x^2+5*x+6=0\n"
-            "/solve x^2-9\n\n"
-            "📦 6) MATRICES\n"
-            "Create and work with matrices.\n"
-            "Examples:\n"
-            "Matrix([[1,2],[3,4]])\n"
-            "det([[1,2],[3,4]])\n"
-            "inv([[1,2],[3,4]])\n"
-            "transpose([[1,2],[3,4]])\n\n"
-            "📈 7) GRAPH PLOTTING\n"
-            "Use /plot to draw one or more functions.\n"
-            "Examples:\n"
-            "/plot x^2\n"
-            "/plot sin(x)\n"
-            "/plot sin(x),cos(x)\n"
-            "/plot x^2,x^3\n\n"
-            "📉 8) STATISTICS\n"
-            "Use mean, variance, std.\n"
-            "Examples:\n"
-            "mean(2,4,6,8)\n"
-            "variance(1,2,3,4,5)\n"
-            "std(1,2,3,4,5)\n\n"
-            "🔔 9) NORMAL DISTRIBUTION\n"
-            "You can use Normal and pdf.\n"
-            "Examples:\n"
-            "pdf(Normal('X',0,1))(0)\n\n"
-            "🔄 10) UNIT CONVERSION\n"
-            "Use: value unit to unit\n"
-            "Supported now:\n"
-            "km to m\n"
-            "m to km\n"
-            "kg to g\n"
-            "g to kg\n"
-            "cm to m\n"
-            "m to cm\n"
-            "mm to m\n"
-            "m to mm\n"
-            "Examples:\n"
-            "10 km to m\n"
-            "5000 m to km\n"
-            "2 kg to g\n\n"
-            "🔗 11) SHORT URL\n"
-            "Use /short followed by a URL.\n"
-            "Example:\n"
-            "/short https://example.com\n\n"
-            "📤 12) EXPORT HISTORY\n"
-            "Use /export to download your saved calculations.\n"
-            "Example:\n"
-            "/export\n\n"
-            "🤖 13) AI REPLIES\n"
-            "If expression is not solved by calculator, bot sends it to Gemini AI.\n"
-            "Example:\n"
-            "Explain Newton's law\n"
-            "Write a Python program\n\n"
-            "💾 14) HISTORY\n"
-            "Every solved calculation is saved automatically.\n"
-            "Use /export to get all saved history.\n\n"
-            "✨ 15) SPECIAL SYMBOLS SUPPORTED\n"
-            "The bot supports many special math inputs.\n"
-            "Examples:\n"
-            "² ³ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹\n"
-            "½ ¼ ¾ ⅓ ⅔ ⅕ ⅖ ⅗ ⅘ ⅙ ⅚ ⅛ ⅜ ⅝ ⅞\n"
-            "× ÷ %\n\n"
-            "⚡ QUICK EXAMPLES TO TRY\n"
-            "2² + 5²\n"
-            "sin 30\n"
-            "diff(x^3,x)\n"
-            "/solve x^2-9=0\n"
-            "/plot sin(x),cos(x)\n"
-            "10 km to m\n"
-            "mean(10,20,30)\n\n"
-            "👨‍💻 Developer: @Sudhakaran12"
-        )
+        await async_send(chat_id, "📘 Use standard math operations, or try special functions like `limit()`, `series()`, `hex()`, `bin()`. Use `/plot x^2`, `/solve x^2-4=0`, `/export` for history, or `/clear` to wipe history. Developer: @Sudhakaran12")
 
     elif lower.startswith("/short"):
         url = text[6:].strip()
@@ -464,54 +341,68 @@ async def webhook(request: Request):
             await asyncio.to_thread(bot.send_photo, chat_id, img)
 
     elif lower.startswith("/solve"):
-        try:
-            expr = text[6:].strip()
-            if not expr:
-                await async_send(chat_id, "❌ Please provide an equation")
-            else:
-                res = solve_equation(expr, chat_id)
+        expr = text[6:].strip()
+        if not expr:
+            await async_send(chat_id, "❌ Please provide an equation")
+        else:
+            res = await asyncio.to_thread(solve_equation, expr, chat_id)
+            if res == "TIMEOUT":
+                await async_send(chat_id, "❌ Equation is too complex (Timed out).")
+            elif res is not None:
                 await async_send(chat_id, f"🧠 {res}")
-        except Exception as e:
-            await async_send(chat_id, f"❌ Solve error: {str(e)[:120]}")
+            else:
+                await async_send(chat_id, "❌ Could not solve equation.")
 
     elif lower == "/export":
         async with db_lock:
             rows = await asyncio.to_thread(get_history, chat_id)
 
         if not rows:
-            await async_send(chat_id, "❌ No history")
+            await async_send(chat_id, "❌ No history found.")
         else:
-            file_name = f"history_{chat_id}.txt"
+            # Using memory buffer to save disk I/O
+            buf = BytesIO()
+            for e, r in rows:
+                buf.write(f"{e} = {r}\n".encode("utf-8"))
+            buf.seek(0)
+            buf.name = f"history_{chat_id}.txt"
+            await asyncio.to_thread(bot.send_document, chat_id, buf)
             
-            # Write to file
-            with open(file_name, "w", encoding="utf-8") as f:
-                for e, r in rows:
-                    f.write(f"{e} = {r}\n")
-                    
-            # Send file to telegram
-            with open(file_name, "rb") as f:
-                await asyncio.to_thread(bot.send_document, chat_id, f)
-                
-            # Clean up the file so server storage doesn't fill up
-            if os.path.exists(file_name):
-                os.remove(file_name)
+    elif lower == "/clear":
+        await clear_history(chat_id)
+        await async_send(chat_id, "🗑️ Your calculation history has been cleared!")
 
     else:
-        # unit conversion
+        # 1. Check unit conversion
         conversion = convert_units(text)
         if conversion is not None:
             await async_send(chat_id, f"🔄 {conversion}")
-            return {"ok": True}
+            return
 
-        # calculator first
-        result = evaluate(text, chat_id)
-        if result is not None:
+        # 2. Check Calculator
+        result = await asyncio.to_thread(evaluate, text, chat_id)
+        if result == "TIMEOUT":
+            await async_send(chat_id, "❌ Calculation took too long and was aborted.")
+        elif result is not None:
             await save_history(chat_id, text, result)
             await async_send(chat_id, f"✅ {result}")
         else:
+            # 3. Fallback to Gemini
             reply = await asyncio.to_thread(gemini_reply, text)
             await async_send(chat_id, reply)
 
+# ================= WEBHOOK =================
+@app.post("/webhook")
+async def webhook(request: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await request.json()
+    except Exception:
+        return {"ok": False, "error": "Invalid JSON"}
+        
+    if "message" in data:
+        # Immediately acknowledge Telegram and pass work to background task
+        background_tasks.add_task(process_message, data["message"])
+        
     return {"ok": True}
 
 @app.get("/")
