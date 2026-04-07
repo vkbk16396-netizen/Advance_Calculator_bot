@@ -7,8 +7,8 @@ import sympy as sp
 from google import genai
 
 # ===== CONFIG =====
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-GENAI_API_KEY = "YOUR_GEMINI_API_KEY"
+BOT_TOKEN = "8719916019:AAGBPiuORWMpsotcwA_OwKji_w494dWRUPo"
+GENAI_API_KEY = "AIzaSyDl4YaCIulXWEx0Ey5A7fpmhJWEY3yP2Ww"
 AI_COOLDOWN_SECONDS = 8
 
 # ===== LOGGING =====
